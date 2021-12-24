@@ -24,8 +24,10 @@ use rp2040_hal as hal;
 
 // Some traits we need
 use cortex_m::prelude::*;
+use core::fmt::Write;
 use embedded_time::rate::Extensions;
 use rp2040_hal::clocks::Clock;
+
 
 // A shorter alias for the Peripheral Access Crate, which provides low-level
 // register access
@@ -79,6 +81,16 @@ fn main() -> ! {
         sio.gpio_bank0,
         &mut pac.RESETS,
     );
+
+    let mut uart = hal::uart::UartPeripheral::<_, _>::new(pac.UART0, &mut pac.RESETS)
+    .enable(
+        hal::uart::common_configs::_115200_8_N_1,
+        clocks.peripheral_clock.freq(),
+    )
+    .unwrap();
+
+    uart.write_full_blocking(b"ESP32 example\r\n");
+    writeln!(uart, "OUTPUT USING writeln!").ok().unwrap();
 
     // These are implicitly used by the spi driver if they are in the correct mode
     let _spi_sclk = pins.gpio6.into_mode::<hal::gpio::FunctionSpi>();
