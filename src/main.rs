@@ -1,11 +1,7 @@
-//! # SPI Example
+//! # SPI ESP Pico Wireless Example
 //!
 //! This application demonstrates how to use the SPI Driver to talk to a remote
-//! SPI device.
-//!
-//!
-//! It may need to be adapted to your particular board layout and/or pin
-//! assignment.
+//! ESP32 wifi SPI device.
 //!
 //! See the `Cargo.toml` file for Copyright and licence details.
 
@@ -42,6 +38,8 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 /// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
+
+const GET_FW_VERSION: u8 = 0x37u8;
 
 /// Entry point to our bare-metal application.
 ///
@@ -89,49 +87,54 @@ fn main() -> ! {
     )
     .unwrap();
 
+    // UART TX (characters sent from RP2040) on pin 1 (GPIO0)
+    let _tx_pin = pins.gpio0.into_mode::<hal::gpio::FunctionUart>();
+    // UART RX (characters reveived by RP2040) on pin 2 (GPIO1)
+    let _rx_pin = pins.gpio1.into_mode::<hal::gpio::FunctionUart>();
+
     uart.write_full_blocking(b"ESP32 example\r\n");
-    writeln!(uart, "OUTPUT USING writeln!").ok().unwrap();
 
     // These are implicitly used by the spi driver if they are in the correct mode
-    let _spi_sclk = pins.gpio6.into_mode::<hal::gpio::FunctionSpi>();
-    let _spi_mosi = pins.gpio7.into_mode::<hal::gpio::FunctionSpi>();
-    let _spi_miso = pins.gpio4.into_mode::<hal::gpio::FunctionSpi>();
+    let _spi_sclk = pins.gpio24.into_mode::<hal::gpio::FunctionSpi>();
+    let _spi_mosi = pins.gpio25.into_mode::<hal::gpio::FunctionSpi>();
+    let _spi_miso = pins.gpio21.into_mode::<hal::gpio::FunctionSpi>();
     let spi = hal::Spi::<_, _, 8>::new(pac.SPI0);
 
     // Exchange the uninitialised SPI driver for an initialised one
     let mut spi = spi.init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
-        16_000_000u32.Hz(),
+        8_000_000u32.Hz(),
         &embedded_hal::spi::MODE_0,
     );
 
     // Write out 0, ignore return value
-    if spi.write(&[0]).is_ok() {
+    //if spi.write(&[0]).is_ok() {
         // SPI write was succesful
-    };
+    //};
 
-    // write 50, then check the return
-    let send_success = spi.send(50);
+    // write 0x37, then check the return
+    let send_success = spi.send(GET_FW_VERSION);
     match send_success {
         Ok(_) => {
             // We succeeded, check the read value
-            if let Ok(_x) = spi.read() {
-                // We got back `x` in exchange for the 0x50 we sent.
+            if let Ok(x) = spi.read() {
+                // We got back `x` in exchange for the 0x37 we sent.
+                writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
             };
         }
-        Err(_) => todo!(),
+        Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
     }
 
     // Do a read+write at the same time. Data in `buffer` will be replaced with
     // the data read from the SPI device.
-    let mut buffer: [u8; 4] = [1, 2, 3, 4];
-    let transfer_success = spi.transfer(&mut buffer);
-    #[allow(clippy::single_match)]
-    match transfer_success {
-        Ok(_) => {}  // Handle success
-        Err(_) => {} // handle errors
-    };
+    //let mut buffer: [u8; 4] = [1, 2, 3, 4];
+    //let transfer_success = spi.transfer(&mut buffer);
+    //#[allow(clippy::single_match)]
+    //match transfer_success {
+    //    Ok(_) => {}  // Handle success
+    //    Err(_) => {} // handle errors
+    //};
 
     #[allow(clippy::empty_loop)]
     loop {
