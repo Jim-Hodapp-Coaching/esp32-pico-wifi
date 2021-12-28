@@ -1,4 +1,4 @@
-# A Rust-based UART echo server for the Raspberry Pi Pico
+# A Rust-based Pico driver for the ESP32 wireless feather board from Pimoroni
 
 ## Getting started
 
@@ -8,6 +8,9 @@ https://reltech.substack.com/p/getting-started-with-rust-on-a-raspberry
 
 On a Mac, to run minicom: `minicom -D /dev/tty.usbmodem14201 -b 115200`. Note that you'll most likely
 need to find the current /dev link assigned to the Pico UART for your particular machine.
+
+At the time of writing, this code is heavily influenced by the Pimoroni C++ Wifi driver:
+https://github.com/pimoroni/pimoroni-pico/blob/main/drivers/esp32spi/
 
 ## Requirements
 - The standard Rust tooling (cargo, rustup) which you can install from https://rustup.rs/
