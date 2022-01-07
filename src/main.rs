@@ -26,11 +26,12 @@ use core::fmt::Write;
 use embedded_time::rate::Extensions;
 use embedded_time::fixed_point::FixedPoint;
 use rp2040_hal::clocks::Clock;
-use rp2040_hal::{pac, gpio::{bank0::Gpio7, bank0::Gpio10, bank0::Gpio16, bank0::Gpio18, bank0::Gpio19,
-     Pin, Input, BusKeep, Output, PushPull}};
+use rp2040_hal::{pac, gpio::{bank0::Gpio2, bank0::Gpio7, bank0::Gpio10, bank0::Gpio11, bank0::Gpio16, bank0::Gpio18, bank0::Gpio19,
+     Pin, Input, FloatingInput, Output, PushPull}};
 
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::blocking::delay::DelayMs;
 
 use crate::hal::spi::Enabled;
 
@@ -54,51 +55,56 @@ const REPLY_FLAG: u8 = 1 << 7;
 
 const GET_FW_VERSION: u8 = 0x37u8;
 
+struct Esp32Pins {
+    cs: Pin<Gpio7, hal::gpio::PushPullOutput>,
+    gpio0: Pin<Gpio2, hal::gpio::PushPullOutput>,
+    resetn: Pin<Gpio11, hal::gpio::PushPullOutput>,
+    ack: Pin<Gpio10, hal::gpio::FloatingInput>,
+}
+
 struct SpiDrv {
     spi: hal::Spi::<Enabled, pac::SPI0, 8>,
-    cs: Pin<Gpio7, Output<PushPull>>,
-    sck: Pin<Gpio18, hal::gpio::FunctionSpi>,
-    mosi: Pin<Gpio19, hal::gpio::FunctionSpi>,
-    miso: Pin<Gpio16, hal::gpio::FunctionSpi>,
-    ack: Pin<Gpio10, Input<BusKeep>>,
+    esp32_pins: Esp32Pins,
 }
 
 impl SpiDrv {
     fn new(spi: hal::Spi<Enabled, pac::SPI0, 8>,
-           cs: Pin<Gpio7, Output<PushPull>>,
-           sck: Pin<Gpio18, hal::gpio::FunctionSpi>,
-           mosi: Pin<Gpio19, hal::gpio::FunctionSpi>,
-           miso: Pin<Gpio16, hal::gpio::FunctionSpi>,
-           ack: Pin<Gpio10, Input<BusKeep>>,
+           pins: Esp32Pins,
         ) -> SpiDrv {
         SpiDrv {
             spi: spi,
-            cs: cs,
-            sck: sck,
-            mosi: mosi,
-            miso: miso,
-            ack: ack,
+            esp32_pins: pins,
         }
     }
 
-    // fn init() -> {
-    //     cortex_m::asm::nop();
-    // }
+    fn init(&mut self) {
+        // Chip select is active-low, so we'll initialise it to a driven-high state
+        self.esp32_pins.cs.set_high().unwrap();
+    }
+
+    pub fn reset<D: DelayMs<u16>>(&mut self, delay: &mut D) {
+        self.esp32_pins.gpio0.set_high().unwrap();
+        self.esp32_pins.cs.set_high().unwrap();
+        self.esp32_pins.resetn.set_low().unwrap();
+        delay.delay_ms(10);
+        self.esp32_pins.resetn.set_high().unwrap();
+        delay.delay_ms(750);
+    }
 
     fn esp_select(&mut self) {
-        self.cs.set_low().unwrap();
+        self.esp32_pins.cs.set_low().unwrap();
     }
 
     fn esp_deselect(&mut self) {
-        self.cs.set_high().unwrap();
+        self.esp32_pins.cs.set_high().unwrap();
     }
 
     fn get_esp_ready(&self) -> bool {
-        self.ack.is_low().unwrap()
+        self.esp32_pins.ack.is_low().unwrap()
     }
 
     fn get_esp_ack(&self) -> bool {
-        self.ack.is_high().unwrap()
+        self.esp32_pins.ack.is_high().unwrap()
     }
 
     fn wait_for_esp_ready(&self) {
@@ -293,26 +299,19 @@ fn main() -> ! {
         &embedded_hal::spi::MODE_0,
     );
 
-    // Chip select is active-low, so we'll initialise it to a driven-high state
-    let mut spi_cs = pins.gpio7.into_mode::<hal::gpio::PushPullOutput>();
-    spi_cs.set_high().unwrap();
+    let esp32_pins = Esp32Pins {
+        // Chip select is active-low, so we'll initialise it to a driven-high state
+        cs: pins.gpio7.into_mode::<hal::gpio::PushPullOutput>(),
+        gpio0: pins.gpio2.into_mode::<hal::gpio::PushPullOutput>(),
+        resetn: pins.gpio11.into_mode::<hal::gpio::PushPullOutput>(),
+        ack: pins.gpio10.into_mode::<hal::gpio::FloatingInput>(),
+    };
 
-    //let spi_ack = pins.gpio10.into_bus_keep_input();
+    // Note: Pass an Enabled Spi instance
+    let mut spi_drv = SpiDrv::new(spi, esp32_pins);
 
-    let mut gpio0 = pins.gpio2.into_mode::<hal::gpio::PushPullOutput>();
-
-    let mut resetn = pins.gpio11.into_mode::<hal::gpio::PushPullOutput>();
-
-    // reset()
-    gpio0.set_high().unwrap();
-    spi_cs.set_high().unwrap();
-    resetn.set_low().unwrap();
-    delay.delay_ms(10);
-    resetn.set_high().unwrap();
-    delay.delay_ms(750);
-
-    // // Note: Pass an Enabled Spi instance
-    //let mut spi_drv = SpiDrv::new(spi, spi_cs, spi_sclk, spi_mosi, spi_miso, spi_ack);
+    spi_drv.init();
+    spi_drv.reset(&mut delay);
 
     //delay.delay_ms(500);
 
