@@ -26,9 +26,13 @@ use core::fmt::Write;
 use embedded_time::rate::Extensions;
 use embedded_time::fixed_point::FixedPoint;
 use rp2040_hal::clocks::Clock;
-use rp2040_hal::{pac, gpio::{bank0::Gpio7, bank0::Gpio10, Pin, Input, Floating, Output, PushPull}};
+use rp2040_hal::{pac, gpio::{bank0::Gpio7, bank0::Gpio10, bank0::Gpio16, bank0::Gpio18, bank0::Gpio19,
+     Pin, Input, BusKeep, Output, PushPull}};
 
+use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
+
+use crate::hal::spi::Enabled;
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -40,45 +44,179 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
+const START_CMD: u8 = 0xE0u8;
+const END_CMD: u8 = 0xEEu8;
+const ERR_CMD: u8 = 0xEFu8;
+
+const PARAMS_ARRAY_LEN: usize = 5;
+
+const REPLY_FLAG: u8 = 1 << 7;
+
 const GET_FW_VERSION: u8 = 0x37u8;
 
-fn esp_select(cs_pin: &mut Pin<Gpio7, Output<PushPull>>) {
-    cs_pin.set_low().unwrap();
+struct SpiDrv {
+    spi: hal::Spi::<Enabled, pac::SPI0, 8>,
+    cs: Pin<Gpio7, Output<PushPull>>,
+    sck: Pin<Gpio18, hal::gpio::FunctionSpi>,
+    mosi: Pin<Gpio19, hal::gpio::FunctionSpi>,
+    miso: Pin<Gpio16, hal::gpio::FunctionSpi>,
+    ack: Pin<Gpio10, Input<BusKeep>>,
 }
 
-fn esp_deselect(cs_pin: &mut Pin<Gpio7, Output<PushPull>>) {
-    cs_pin.set_high().unwrap();
-}
-
-fn get_esp_ready(ack_pin: &mut Pin<Gpio10, Input<Floating>>) -> bool {
-    true
-}
-
-fn get_esp_ack(ack_pin: &mut Pin<Gpio10, Input<Floating>>) -> bool {
-    true
-}
-
-fn wait_for_esp_ready(ack_pin: &mut Pin<Gpio10, Input<Floating>>) {
-    while get_esp_ready(ack_pin) != true {
-        cortex_m::asm::nop(); // Make sure rustc doesn't optimize this loop out
+impl SpiDrv {
+    fn new(spi: hal::Spi<Enabled, pac::SPI0, 8>,
+           cs: Pin<Gpio7, Output<PushPull>>,
+           sck: Pin<Gpio18, hal::gpio::FunctionSpi>,
+           mosi: Pin<Gpio19, hal::gpio::FunctionSpi>,
+           miso: Pin<Gpio16, hal::gpio::FunctionSpi>,
+           ack: Pin<Gpio10, Input<BusKeep>>,
+        ) -> SpiDrv {
+        SpiDrv {
+            spi: spi,
+            cs: cs,
+            sck: sck,
+            mosi: mosi,
+            miso: miso,
+            ack: ack,
+        }
     }
-}
 
-fn wait_for_esp_ack(ack_pin: &mut Pin<Gpio10, Input<Floating>>) {
-    while get_esp_ack(ack_pin) != true {
-        cortex_m::asm::nop(); // Make sure rustc doesn't optimize this loop out
+    // fn init() -> {
+    //     cortex_m::asm::nop();
+    // }
+
+    fn esp_select(&mut self) {
+        self.cs.set_low().unwrap();
     }
-}
 
-fn wait_for_esp_select(cs_pin: &mut Pin<Gpio7, Output<PushPull>>,
-                       ack_pin: &mut Pin<Gpio10, Input<Floating>>) {
-    wait_for_esp_ready(ack_pin);   
-    esp_select(cs_pin);
-    wait_for_esp_ack(ack_pin);
-}
+    fn esp_deselect(&mut self) {
+        self.cs.set_high().unwrap();
+    }
 
-fn wait_response_cmd() {
+    fn get_esp_ready(&self) -> bool {
+        self.ack.is_low().unwrap()
+    }
 
+    fn get_esp_ack(&self) -> bool {
+        self.ack.is_high().unwrap()
+    }
+
+    fn wait_for_esp_ready(&self) {
+        while self.get_esp_ready() != true {
+            cortex_m::asm::nop(); // Make sure rustc doesn't optimize this loop out
+        }
+    }
+
+    fn wait_for_esp_ack(&self) {
+        while self.get_esp_ack() != true {
+            cortex_m::asm::nop(); // Make sure rustc doesn't optimize this loop out
+        }
+    }
+
+    fn wait_for_esp_select(&mut self) {
+        self.wait_for_esp_ready();   
+        self.esp_select();
+        self.wait_for_esp_ack();
+    }
+
+    fn read_byte(&mut self) -> u8 {
+        self.get_param()
+    }
+
+    fn read_and_check_byte(&mut self, check_byte: u8) -> Result<bool, u8> {
+        let byte_out = self.get_param();
+        if byte_out == check_byte {
+            Ok(true)
+        } else {
+            Err(byte_out)
+        }
+    }
+
+    fn wait_for_byte(&mut self, wait_byte: u8) -> bool {
+        let mut timeout: u16 = 1000u16;
+
+        let byte_read = loop {
+            let byte_read = self.read_byte();
+            if byte_read == ERR_CMD {
+                break ERR_CMD;
+            } else if byte_read == wait_byte {
+                break byte_read;
+            } else if timeout == 0 {
+                break ERR_CMD;
+            }
+            timeout -= 1;
+        };
+        byte_read == wait_byte
+    }
+
+    fn check_start_cmd(&mut self) -> bool {
+        self.wait_for_byte(START_CMD)
+    } 
+
+    fn wait_response_cmd(&mut self, cmd: u8, num_param: u8) -> Result<[u8; PARAMS_ARRAY_LEN], u8> {
+        // TODO: can we turn this into more of a functional syntax to clean
+        // up the deep nesting?
+        if self.check_start_cmd() {
+            let check_result = self.read_and_check_byte(cmd | REPLY_FLAG);
+            match check_result {
+                Ok(_) => {
+                    let check_result = self.read_and_check_byte(num_param);
+                    match check_result {
+                        Ok(_) => {
+                            let num_param_read: usize = self.get_param() as usize;
+                            let mut i: usize = 0;
+                            let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0];
+                            while i < num_param_read {
+                                params[i] = self.get_param();
+                                i += 1;
+                            }
+
+                            let check_result = self.read_and_check_byte(END_CMD);
+                            match check_result {
+                                Ok(_) => {
+                                    Ok(params)
+                                }
+                                Err(wrong_byte) => {
+                                    Err(wrong_byte)
+                                }
+                            }
+                        }
+                        Err(wrong_byte) => {
+                            Err(wrong_byte)
+                        }
+                    }
+                }
+                Err(wrong_byte) => {
+                    Err(wrong_byte)
+                }
+            }
+        } else {
+            Err(START_CMD)
+        }
+    }
+
+    fn get_param(&mut self) -> u8 {
+        // Blocking read, don't return until we've read a byte successfully
+        let byte = loop {
+            let read_success = self.spi.read();
+            match read_success {
+                Ok(byte) => {
+                    break byte;
+                }
+                Err(e) => todo!(),
+            }
+        };
+        byte
+    }
+
+    fn send_cmd(&mut self, cmd: u8, num_param: u8) {
+        let _send_success = self.spi.send(START_CMD).ok().unwrap();
+        let _send_success = self.spi.send(cmd & !(REPLY_FLAG)).ok().unwrap();
+        let _send_success = self.spi.send(num_param).ok().unwrap();
+        if num_param == 0 {
+            let _send_success = self.spi.send(END_CMD).ok().unwrap();
+        }
+    }
 }
 
 /// Entry point to our bare-metal application.
@@ -135,54 +273,96 @@ fn main() -> ! {
     )
     .unwrap();
 
+    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
+
     uart.write_full_blocking(b"ESP32 example\r\n");
 
+    // init()
     // These are implicitly used by the spi driver if they are in the correct mode
-    let _spi_sclk = pins.gpio18.into_mode::<hal::gpio::FunctionSpi>();
-    let _spi_mosi = pins.gpio19.into_mode::<hal::gpio::FunctionSpi>();
-    let _spi_miso = pins.gpio16.into_mode::<hal::gpio::FunctionSpi>();
-    //let _spi_cs = pins.gpio7.into_mode::<hal::gpio::FunctionSpi>();
-    let mut spi_cs = pins.gpio7.into_mode::<hal::gpio::PushPullOutput>();
-    let mut spi_ack = pins.gpio10.into_mode::<hal::gpio::FloatingInput>();
+    let spi_miso = pins.gpio16.into_mode::<hal::gpio::FunctionSpi>();
+    let spi_sclk = pins.gpio18.into_mode::<hal::gpio::FunctionSpi>();
+    let spi_mosi = pins.gpio19.into_mode::<hal::gpio::FunctionSpi>();
+
     let spi = hal::Spi::<_, _, 8>::new(pac.SPI0);
 
     // Exchange the uninitialised SPI driver for an initialised one
-    let mut spi = spi.init(
+    let spi = spi.init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
         8_000_000u32.Hz(),
         &embedded_hal::spi::MODE_0,
     );
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
+    // Chip select is active-low, so we'll initialise it to a driven-high state
+    let mut spi_cs = pins.gpio7.into_mode::<hal::gpio::PushPullOutput>();
+    spi_cs.set_high().unwrap();
 
-    // Write out 0, ignore return value
-    //if spi.write(&[0]).is_ok() {
-        // SPI write was succesful
-    //};
+    //let spi_ack = pins.gpio10.into_bus_keep_input();
 
-    wait_for_esp_select(&mut spi_cs, &mut spi_ack);
-    //spi_cs.set_low().unwrap();
+    let mut gpio0 = pins.gpio2.into_mode::<hal::gpio::PushPullOutput>();
+
+    let mut resetn = pins.gpio11.into_mode::<hal::gpio::PushPullOutput>();
+
+    // reset()
+    gpio0.set_high().unwrap();
+    spi_cs.set_high().unwrap();
+    resetn.set_low().unwrap();
+    delay.delay_ms(10);
+    resetn.set_high().unwrap();
+    delay.delay_ms(750);
+
+    // // Note: Pass an Enabled Spi instance
+    //let mut spi_drv = SpiDrv::new(spi, spi_cs, spi_sclk, spi_mosi, spi_miso, spi_ack);
+
+    //delay.delay_ms(500);
+
+    // uart.write_full_blocking(b"wait_for_esp_select()\r\n");
+    // spi_drv.wait_for_esp_select();
+    // // //spi_cs.set_low().unwrap();
+
+    // uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
+    // // // write 0x37, then check the return
+    // spi_drv.send_cmd(GET_FW_VERSION, 0);
+
+    // spi_drv.esp_deselect();
+    // spi_drv.wait_for_esp_select();
+
+    // // Get the ESP32 firmware version
+    // let wait_response = spi_drv.wait_response_cmd(GET_FW_VERSION, 1);
+    // match wait_response {
+    //     Ok(params) => {
+    //         writeln!(uart, "ESP32 firmware version: {:?}\r\n", params[0])
+    //             .ok()
+    //             .unwrap();
+    //     }
+    //     Err(wrong_byte) => {
+    //         writeln!(uart, "ESP32 SPI send GET_FW_VERSION wrong_byte: {:?}\r\n", wrong_byte)
+    //             .ok()
+    //             .unwrap() 
+    //     }
+    // }
+
+    // spi_drv.esp_deselect();
 
     // write 0x37, then check the return
-    let send_success = spi.send(GET_FW_VERSION);
-    match send_success {
-        Ok(_) => {
-            esp_deselect(&mut spi_cs);
-            //spi_cs.set_high().unwrap();
-            wait_for_esp_select(&mut spi_cs, &mut spi_ack);
+    // let send_success = spi.send(GET_FW_VERSION);
+    // match send_success {
+    //     Ok(_) => {
+    //         spi_drv.esp_deselect();
+    //         //spi_cs.set_high().unwrap();
+    //         spi_drv.wait_for_esp_select();
 
-            wait_response_cmd();
-            // We succeeded, check the read value
-            // if let Ok(x) = spi.read() {
-            //     // We got back `x` in exchange for the 0x37 we sent.
-            //     writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
-            // };
+    //         spi_drv.wait_response_cmd();
+    //         // We succeeded, check the read value
+    //         // if let Ok(x) = spi.read() {
+    //         //     // We got back `x` in exchange for the 0x37 we sent.
+    //         //     writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
+    //         // };
 
-            esp_deselect(&mut spi_cs);
-        }
-        Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
-    }
+    //         spi_drv.esp_deselect();
+    //     }
+    //     Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
+    // }
 
 
     // Do a read+write at the same time. Data in `buffer` will be replaced with
@@ -202,24 +382,24 @@ fn main() -> ! {
         // spi_cs.set_high().unwrap();
         // delay.delay_ms(10);
 
-        spi_cs.set_low().unwrap();
+        // spi_cs.set_low().unwrap();
 
-        // write 0x37, then check the return
-        let send_success = spi.send(GET_FW_VERSION);
-        match send_success {
-            Ok(_) => {
-                // We succeeded, check the read value
-                if let Ok(x) = spi.read() {
-                    // We got back `x` in exchange for the 0x37 we sent.
-                    writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
-                };
-            }
-            Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
-        }
+        // // write 0x37, then check the return
+        // let send_success = spi.send(GET_FW_VERSION);
+        // match send_success {
+        //     Ok(_) => {
+        //         // We succeeded, check the read value
+        //         if let Ok(x) = spi.read() {
+        //             // We got back `x` in exchange for the 0x37 we sent.
+        //             writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
+        //         };
+        //     }
+        //     Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
+        // }
     
-        spi_cs.set_high().unwrap();
+        // spi_cs.set_high().unwrap();
 
-        delay.delay_ms(1000);
+        // delay.delay_ms(1000);
     }
 }
 
