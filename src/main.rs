@@ -26,8 +26,7 @@ use core::fmt::Write;
 use embedded_time::rate::Extensions;
 use embedded_time::fixed_point::FixedPoint;
 use rp2040_hal::clocks::Clock;
-use rp2040_hal::{pac, gpio::{bank0::Gpio2, bank0::Gpio7, bank0::Gpio10, bank0::Gpio11, bank0::Gpio16, bank0::Gpio18, bank0::Gpio19,
-     Pin, Input, FloatingInput, Output, PushPull}};
+use rp2040_hal::{pac, gpio::{bank0::Gpio2, bank0::Gpio7, bank0::Gpio10, bank0::Gpio11, Pin}};
 
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
@@ -54,6 +53,8 @@ const PARAMS_ARRAY_LEN: usize = 5;
 const REPLY_FLAG: u8 = 1 << 7;
 
 const GET_FW_VERSION: u8 = 0x37u8;
+
+type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
 struct Esp32Pins {
     cs: Pin<Gpio7, hal::gpio::PushPullOutput>,
@@ -114,7 +115,7 @@ impl SpiDrv {
     }
 
     fn wait_for_esp_ack(&self) {
-        while self.get_esp_ack() != true {
+        while !self.get_esp_ack() {
             cortex_m::asm::nop(); // Make sure rustc doesn't optimize this loop out
         }
     }
@@ -125,103 +126,128 @@ impl SpiDrv {
         self.wait_for_esp_ack();
     }
 
-    fn read_byte(&mut self) -> u8 {
-        self.get_param()
-    }
-
-    fn read_and_check_byte(&mut self, check_byte: u8) -> Result<bool, u8> {
-        let byte_out = self.get_param();
-        if byte_out == check_byte {
-            Ok(true)
-        } else {
-            Err(byte_out)
+    fn read_byte(&mut self) -> SpiResult<u8> {
+        let result = self.get_param();
+        match result {
+            Ok(byte_out) => { return Ok(byte_out); }
+            Err(e) => { return Err(e); }
         }
     }
 
-    fn wait_for_byte(&mut self, wait_byte: u8) -> bool {
+    fn read_and_check_byte(&mut self, check_byte: u8) -> SpiResult<bool> {
+        let result = self.get_param();
+        match result {
+            Ok(byte_out) => { return Ok(byte_out == check_byte); }
+            Err(e) => { return Err(e); }
+        }
+    }
+
+    fn wait_for_byte(&mut self, wait_byte: u8) -> SpiResult<bool> {
         let mut timeout: u16 = 1000u16;
 
-        let byte_read = loop {
-            let byte_read = self.read_byte();
-            if byte_read == ERR_CMD {
-                break ERR_CMD;
-            } else if byte_read == wait_byte {
-                break byte_read;
-            } else if timeout == 0 {
-                break ERR_CMD;
+        loop {
+            let result = self.read_byte();
+            match result {
+                Ok(byte_read) => {
+                    if byte_read == ERR_CMD {
+                        return Ok(false);
+                    } else if byte_read == wait_byte {
+                        return Ok(true);
+                    } else if timeout == 0 {
+                        return Ok(false);
+                    }
+                    timeout -= 1;
+                }
+                Err(e) => { return Err(e); }
             }
-            timeout -= 1;
-        };
-        byte_read == wait_byte
+        }
     }
 
-    fn check_start_cmd(&mut self) -> bool {
-        self.wait_for_byte(START_CMD)
+    fn check_start_cmd(&mut self) -> SpiResult<bool> {
+        let result = self.wait_for_byte(START_CMD);
+        match result {
+            Ok(b) => { return Ok(b); }
+            Err(e) => { return Err(e); }
+        }
     } 
 
-    fn wait_response_cmd(&mut self, cmd: u8, num_param: u8) -> Result<[u8; PARAMS_ARRAY_LEN], u8> {
+    fn wait_response_cmd(&mut self, cmd: u8, num_param: u8) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
         // TODO: can we turn this into more of a functional syntax to clean
-        // up the deep nesting?
-        if self.check_start_cmd() {
-            let check_result = self.read_and_check_byte(cmd | REPLY_FLAG);
-            match check_result {
-                Ok(_) => {
-                    let check_result = self.read_and_check_byte(num_param);
-                    match check_result {
-                        Ok(_) => {
-                            let num_param_read: usize = self.get_param() as usize;
-                            let mut i: usize = 0;
-                            let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0];
-                            while i < num_param_read {
-                                params[i] = self.get_param();
-                                i += 1;
-                            }
+        // up the deep nesting? Investigate `map` for `Result` in Rust by Example
+        let result = self.check_start_cmd();
+        match result {
+            Ok(b) => {
+                return Ok([0, 1, 2, 3, 4 ]);
+                /*
+                let check_result = self.read_and_check_byte(cmd | REPLY_FLAG);
+                match check_result {
+                    Ok(_) => {
+                        let check_result = self.read_and_check_byte(num_param);
+                        match check_result {
+                            Ok(_) => {
+                                let num_param_read: usize = self.get_param() as usize;
+                                let mut i: usize = 0;
+                                let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0];
+                                while i < num_param_read {
+                                    params[i] = self.get_param();
+                                    i += 1;
+                                }
 
-                            let check_result = self.read_and_check_byte(END_CMD);
-                            match check_result {
-                                Ok(_) => {
-                                    Ok(params)
-                                }
-                                Err(wrong_byte) => {
-                                    Err(wrong_byte)
+                                let check_result = self.read_and_check_byte(END_CMD);
+                                match check_result {
+                                    Ok(_) => {
+                                        Ok(params)
+                                    }
+                                    Err(wrong_byte) => {
+                                        Err(wrong_byte)
+                                    }
                                 }
                             }
-                        }
-                        Err(wrong_byte) => {
-                            Err(wrong_byte)
+                            Err(wrong_byte) => {
+                                Err(wrong_byte)
+                            }
                         }
                     }
+                    Err(wrong_byte) => {
+                        Err(wrong_byte)
+                    }
                 }
-                Err(wrong_byte) => {
-                    Err(wrong_byte)
-                }
+                */
             }
-        } else {
-            Err(START_CMD)
+            Err(e) => { return Err(e); }
         }
     }
 
-    fn get_param(&mut self) -> u8 {
+    fn get_param(&mut self) -> Result<u8, nb::Error<core::convert::Infallible>> {
         // Blocking read, don't return until we've read a byte successfully
-        let byte = loop {
-            let read_success = self.spi.read();
-            match read_success {
-                Ok(byte) => {
-                    break byte;
-                }
-                Err(e) => todo!(),
+        loop {
+            let read_result = self.spi.read();
+            match read_result {
+                Ok(byte) => { return Ok(byte); }
+                Err(e) => { continue; }
             }
-        };
-        byte
+        }
     }
 
-    fn send_cmd(&mut self, cmd: u8, num_param: u8) {
-        let _send_success = self.spi.send(START_CMD).ok().unwrap();
-        let _send_success = self.spi.send(cmd & !(REPLY_FLAG)).ok().unwrap();
-        let _send_success = self.spi.send(num_param).ok().unwrap();
-        if num_param == 0 {
-            let _send_success = self.spi.send(END_CMD).ok().unwrap();
+    fn send_cmd(&mut self, cmd: u8, num_param: u8) -> Result<(), core::convert::Infallible> {
+        let mut buf: [u8; 3] = [START_CMD,
+                                cmd & !(REPLY_FLAG),
+                                num_param];
+        let transfer_results = self.spi.transfer(&mut buf);
+        match transfer_results {
+            Ok(_) => {
+                if num_param == 0 {
+                    let mut buf: [u8; 1] = [END_CMD];
+                    let transfer_results = self.spi.transfer(&mut buf);
+                    match transfer_results {
+                        Ok(_) => { return Ok(()); }
+                        Err(e) => { return Err(e); }
+                    }
+                }
+            }
+            Err(e) => { return Err(e); }
         }
+        Ok(())
     }
 }
 
@@ -281,7 +307,7 @@ fn main() -> ! {
 
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
 
-    uart.write_full_blocking(b"ESP32 example\r\n");
+    uart.write_full_blocking(b"\r\nESP32 Wifi PoC (pre-crate)\r\n");
 
     // init()
     // These are implicitly used by the spi driver if they are in the correct mode
@@ -313,35 +339,56 @@ fn main() -> ! {
     spi_drv.init();
     spi_drv.reset(&mut delay);
 
-    //delay.delay_ms(500);
+    delay.delay_ms(500);
 
-    // uart.write_full_blocking(b"wait_for_esp_select()\r\n");
-    // spi_drv.wait_for_esp_select();
-    // // //spi_cs.set_low().unwrap();
+    uart.write_full_blocking(b"-----------------\r\n");
+    writeln!(uart, "START_CMD {:?}\r", START_CMD).ok().unwrap();
+    writeln!(uart, "END_CMD {:?}\r", END_CMD).ok().unwrap();
+    writeln!(uart, "REPLY_FLAG {:?}\r", REPLY_FLAG).ok().unwrap();
+    uart.write_full_blocking(b"-----------------\r\n");
 
-    // uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
-    // // // write 0x37, then check the return
-    // spi_drv.send_cmd(GET_FW_VERSION, 0);
+    // --- get_fw_version() ---
+    uart.write_full_blocking(b"wait_for_esp_select()\r\n");
+    spi_drv.wait_for_esp_select();
+    uart.write_full_blocking(b"\tesp selected\r\n");
 
-    // spi_drv.esp_deselect();
-    // spi_drv.wait_for_esp_select();
+    uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
+    let results = spi_drv.send_cmd(GET_FW_VERSION, 0);
+    match results {
+        Ok(_) => { uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n"); }
+        Err(e) => { writeln!(uart, "\t** Failed to send GET_FW_VERSION command: {:?}\r\n", e).ok().unwrap(); }
+    }
 
-    // // Get the ESP32 firmware version
-    // let wait_response = spi_drv.wait_response_cmd(GET_FW_VERSION, 1);
-    // match wait_response {
-    //     Ok(params) => {
-    //         writeln!(uart, "ESP32 firmware version: {:?}\r\n", params[0])
-    //             .ok()
-    //             .unwrap();
-    //     }
-    //     Err(wrong_byte) => {
-    //         writeln!(uart, "ESP32 SPI send GET_FW_VERSION wrong_byte: {:?}\r\n", wrong_byte)
-    //             .ok()
-    //             .unwrap() 
-    //     }
-    // }
+    spi_drv.esp_deselect();
+    uart.write_full_blocking(b"esp_deselect()\r\n");
 
-    // spi_drv.esp_deselect();
+    uart.write_full_blocking(b"wait_for_esp_select()\r\n");
+    spi_drv.wait_for_esp_select();
+    uart.write_full_blocking(b"\tesp selected\r\n");
+
+    /*
+    // Get the ESP32 firmware version
+    uart.write_full_blocking(b"wait_response_cmd()\r\n");
+    let wait_response = spi_drv.wait_response_cmd(GET_FW_VERSION, 1);
+    match wait_response {
+        Ok(params) => {
+            writeln!(uart, "\tESP32 firmware version: {:?}\r\n", params[0])
+                .ok()
+                .unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
+                .ok()
+                .unwrap() 
+        }
+    }
+    uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
+    */
+
+    spi_drv.esp_deselect();
+    uart.write_full_blocking(b"esp_deselect()\r\n");
+
+    // --- end get_fw_version() ---
 
     // write 0x37, then check the return
     // let send_success = spi.send(GET_FW_VERSION);
@@ -374,8 +421,11 @@ fn main() -> ! {
     //    Err(_) => {} // handle errors
     //};
 
+    let mut i: u64 = 0;
     loop {
-        // delay.delay_ms(5);
+        write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
+        delay.delay_ms(10000);
+        i += 1;
         // spi_cs.set_low().unwrap();
         // delay.delay_ms(5);
         // spi_cs.set_high().unwrap();
