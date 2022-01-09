@@ -27,6 +27,7 @@ use embedded_time::rate::Extensions;
 use embedded_time::fixed_point::FixedPoint;
 use rp2040_hal::clocks::Clock;
 use rp2040_hal::{pac, gpio::{bank0::Gpio2, bank0::Gpio7, bank0::Gpio10, bank0::Gpio11, Pin}};
+use rp2040_hal::gpio::bank0::{Gpio0, Gpio1};
 
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
@@ -55,6 +56,9 @@ const REPLY_FLAG: u8 = 1 << 7;
 const GET_FW_VERSION: u8 = 0x37u8;
 
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
+
+type EnabledUart = hal::uart::UartPeripheral<rp2040_hal::uart::Enabled, pac::UART0,
+    (rp2040_hal::gpio::Pin<Gpio0, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>, rp2040_hal::gpio::Pin<Gpio1, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>)>;
 
 struct Esp32Pins {
     cs: Pin<Gpio7, hal::gpio::PushPullOutput>,
@@ -229,23 +233,33 @@ impl SpiDrv {
         }
     }
 
-    fn send_cmd(&mut self, cmd: u8, num_param: u8) -> Result<(), core::convert::Infallible> {
-        let mut buf: [u8; 3] = [START_CMD,
-                                cmd & !(REPLY_FLAG),
-                                num_param];
-        let transfer_results = self.spi.transfer(&mut buf);
-        match transfer_results {
-            Ok(_) => {
-                if num_param == 0 {
-                    let mut buf: [u8; 1] = [END_CMD];
-                    let transfer_results = self.spi.transfer(&mut buf);
-                    match transfer_results {
-                        Ok(_) => { return Ok(()); }
-                        Err(e) => { return Err(e); }
-                    }
-                }
+    fn send_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<()> {
+        let buf: [u8; 3] = [START_CMD,
+                            cmd & !(REPLY_FLAG),
+                            num_param];
+        let mut i = 0;
+        for byte in buf {
+            let transfer_results = self.spi.send(byte);
+            match transfer_results {
+                Ok(_) => {
+                    writeln!(uart, "end byte {:?}\r", byte).ok().unwrap();
+                    writeln!(uart, "i: {:?}\r", i).ok().unwrap();
+                    i += 1;
+                }   
+                Err(e) => { continue; }
             }
-            Err(e) => { return Err(e); }
+        }
+
+        if num_param == 0 {
+            let buf: [u8; 1] = [END_CMD];
+            let transfer_results = self.spi.send(buf[0]);
+            match transfer_results {
+                Ok(_) => {
+                    writeln!(uart, "end byte {:?}\r", buf[0]).ok().unwrap();
+                    return Ok(());
+                }
+                Err(e) => { return Err(e); }
+            }
         }
         Ok(())
     }
@@ -318,13 +332,19 @@ fn main() -> ! {
     let spi = hal::Spi::<_, _, 8>::new(pac.SPI0);
 
     // Exchange the uninitialised SPI driver for an initialised one
-    let spi = spi.init(
+    let mut spi = spi.init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
         8_000_000u32.Hz(),
         &embedded_hal::spi::MODE_0,
     );
 
+    if spi.write(&[1, 0, 1, 0, 1, 1]).is_ok() {
+        // SPI write was succesful
+        uart.write_full_blocking(b"Successfully wrote SPI buffer\r\n");
+    };
+
+    /*
     let esp32_pins = Esp32Pins {
         // Chip select is active-low, so we'll initialise it to a driven-high state
         cs: pins.gpio7.into_mode::<hal::gpio::PushPullOutput>(),
@@ -353,7 +373,7 @@ fn main() -> ! {
     uart.write_full_blocking(b"\tesp selected\r\n");
 
     uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
-    let results = spi_drv.send_cmd(GET_FW_VERSION, 0);
+    let results = spi_drv.send_cmd(&mut uart, GET_FW_VERSION, 0);
     match results {
         Ok(_) => { uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n"); }
         Err(e) => { writeln!(uart, "\t** Failed to send GET_FW_VERSION command: {:?}\r\n", e).ok().unwrap(); }
@@ -361,12 +381,13 @@ fn main() -> ! {
 
     spi_drv.esp_deselect();
     uart.write_full_blocking(b"esp_deselect()\r\n");
+    */
 
+    /*
     uart.write_full_blocking(b"wait_for_esp_select()\r\n");
     spi_drv.wait_for_esp_select();
     uart.write_full_blocking(b"\tesp selected\r\n");
 
-    /*
     // Get the ESP32 firmware version
     uart.write_full_blocking(b"wait_response_cmd()\r\n");
     let wait_response = spi_drv.wait_response_cmd(GET_FW_VERSION, 1);
@@ -383,10 +404,10 @@ fn main() -> ! {
         }
     }
     uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
-    */
 
     spi_drv.esp_deselect();
     uart.write_full_blocking(b"esp_deselect()\r\n");
+    */
 
     // --- end get_fw_version() ---
 
