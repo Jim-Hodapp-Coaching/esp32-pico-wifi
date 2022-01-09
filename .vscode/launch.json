@@ -5,11 +5,11 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Debug rp2040-uart",
+            "name": "Debug ESP32 Pico Wifi",
             "request": "launch",
             "type": "cortex-debug",
             "cwd": "${workspaceRoot}",
-            "executable": "${workspaceFolder}/target/thumbv6m-none-eabi/debug/rp2040-uart",
+            "executable": "${workspaceFolder}/target/thumbv6m-none-eabi/debug/esp32-pico-wifi",
             "preLaunchTask": "Build binary",
             "servertype": "external",
             // This may need to be gdb-multiarch depending on your system

@@ -19,8 +19,8 @@
             "command": "arm-none-eabi-objcopy",
             "args": [
                 "--output-target", "binary",
-                "./target/thumbv6m-none-eabi/debug/rp2040-uart",
-                "./target/thumbv6m-none-eabi/debug/rp2040-uart.bin"],
+                "./target/thumbv6m-none-eabi/debug/esp32-pico-wifi",
+                "./target/thumbv6m-none-eabi/debug/esp32-pico-wifi.bin"],
             "problemMatcher": [
                 "$rustc"
             ],
