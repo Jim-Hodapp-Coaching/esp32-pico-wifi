@@ -45,13 +45,17 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
 
+const DUMMY_DATA: u8 = 0xFFu8;
+
 const START_CMD: u8 = 0xE0u8;
 const END_CMD: u8 = 0xEEu8;
 const ERR_CMD: u8 = 0xEFu8;
 
-const PARAMS_ARRAY_LEN: usize = 5;
-
+const CMD_FLAG: u8 = 0;
 const REPLY_FLAG: u8 = 1 << 7;
+const DATA_FLAG: u8 = 0x40u8;
+
+const PARAMS_ARRAY_LEN: usize = 8;
 
 const GET_FW_VERSION: u8 = 0x37u8;
 
@@ -130,6 +134,22 @@ impl SpiDrv {
         self.wait_for_esp_ack();
     }
 
+    fn get_param(&mut self) -> Result<u8, nb::Error<core::convert::Infallible>> {
+        // Blocking read, don't return until we've read a byte successfully
+        loop {
+            //let read_result = self.spi.read();
+            let word_out = &mut[DUMMY_DATA];
+            let read_result = self.spi.transfer(word_out);
+            match read_result {
+                Ok(word) => {
+                    let byte: u8 = word[0] as u8;
+                    return Ok(byte);
+                }
+                Err(e) => { continue; }
+            }
+        }
+    }
+
     fn read_byte(&mut self) -> SpiResult<u8> {
         let result = self.get_param();
         match result {
@@ -175,61 +195,58 @@ impl SpiDrv {
         }
     } 
 
-    fn wait_response_cmd(&mut self, cmd: u8, num_param: u8) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
+    fn wait_response_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
         // TODO: can we turn this into more of a functional syntax to clean
         // up the deep nesting? Investigate `map` for `Result` in Rust by Example
         let result = self.check_start_cmd();
         match result {
             Ok(b) => {
-                return Ok([0, 1, 2, 3, 4 ]);
-                /*
+                uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
                 let check_result = self.read_and_check_byte(cmd | REPLY_FLAG);
                 match check_result {
                     Ok(_) => {
+                        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n");
                         let check_result = self.read_and_check_byte(num_param);
                         match check_result {
                             Ok(_) => {
-                                let num_param_read: usize = self.get_param() as usize;
+                                uart.write_full_blocking(b"\tSuccess: read_and_check_byte(num_param)\r\n");
+                                let num_param_read: usize = self.get_param().ok().unwrap() as usize;
+                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read).ok().unwrap();
                                 let mut i: usize = 0;
-                                let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0];
+                                let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
                                 while i < num_param_read {
-                                    params[i] = self.get_param();
+                                    params[i] = self.get_param().ok().unwrap();
+                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i]).ok().unwrap();
                                     i += 1;
                                 }
 
                                 let check_result = self.read_and_check_byte(END_CMD);
                                 match check_result {
                                     Ok(_) => {
+                                        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(END_CMD)\r\n");
                                         Ok(params)
                                     }
                                     Err(wrong_byte) => {
+                                        uart.write_full_blocking(b"\tFailed to read_and_check_byte(END_CMD)\r\n");
                                         Err(wrong_byte)
                                     }
                                 }
                             }
                             Err(wrong_byte) => {
+                                uart.write_full_blocking(b"\tFailed to read_and_check_byte(num_param)\r\n");
                                 Err(wrong_byte)
                             }
                         }
                     }
                     Err(wrong_byte) => {
+                        uart.write_full_blocking(b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n");
                         Err(wrong_byte)
                     }
                 }
-                */
             }
-            Err(e) => { return Err(e); }
-        }
-    }
-
-    fn get_param(&mut self) -> Result<u8, nb::Error<core::convert::Infallible>> {
-        // Blocking read, don't return until we've read a byte successfully
-        loop {
-            let read_result = self.spi.read();
-            match read_result {
-                Ok(byte) => { return Ok(byte); }
-                Err(e) => { continue; }
-            }
+            Err(e) => {
+                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
+                return Err(e); }
         }
     }
 
@@ -237,15 +254,10 @@ impl SpiDrv {
         let buf: [u8; 3] = [START_CMD,
                             cmd & !(REPLY_FLAG),
                             num_param];
-        let mut i = 0;
         for byte in buf {
             let transfer_results = self.spi.send(byte);
             match transfer_results {
-                Ok(_) => {
-                    writeln!(uart, "end byte {:?}\r", byte).ok().unwrap();
-                    writeln!(uart, "i: {:?}\r", i).ok().unwrap();
-                    i += 1;
-                }   
+                Ok(_) => { continue; }
                 Err(e) => { continue; }
             }
         }
@@ -254,10 +266,7 @@ impl SpiDrv {
             let buf: [u8; 1] = [END_CMD];
             let transfer_results = self.spi.send(buf[0]);
             match transfer_results {
-                Ok(_) => {
-                    writeln!(uart, "end byte {:?}\r", buf[0]).ok().unwrap();
-                    return Ok(());
-                }
+                Ok(_) => { return Ok(()); }
                 Err(e) => { return Err(e); }
             }
         }
@@ -332,19 +341,13 @@ fn main() -> ! {
     let spi = hal::Spi::<_, _, 8>::new(pac.SPI0);
 
     // Exchange the uninitialised SPI driver for an initialised one
-    let mut spi = spi.init(
+    let spi = spi.init(
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
-        8_000_000u32.Hz(),
+        500_000u32.Hz(),
         &embedded_hal::spi::MODE_0,
     );
 
-    if spi.write(&[1, 0, 1, 0, 1, 1]).is_ok() {
-        // SPI write was succesful
-        uart.write_full_blocking(b"Successfully wrote SPI buffer\r\n");
-    };
-
-    /*
     let esp32_pins = Esp32Pins {
         // Chip select is active-low, so we'll initialise it to a driven-high state
         cs: pins.gpio7.into_mode::<hal::gpio::PushPullOutput>(),
@@ -362,9 +365,9 @@ fn main() -> ! {
     delay.delay_ms(500);
 
     uart.write_full_blocking(b"-----------------\r\n");
-    writeln!(uart, "START_CMD {:?}\r", START_CMD).ok().unwrap();
-    writeln!(uart, "END_CMD {:?}\r", END_CMD).ok().unwrap();
-    writeln!(uart, "REPLY_FLAG {:?}\r", REPLY_FLAG).ok().unwrap();
+    writeln!(uart, "START_CMD 0x{:X?}\r", START_CMD).ok().unwrap();
+    writeln!(uart, "END_CMD 0x{:X?}\r", END_CMD).ok().unwrap();
+    writeln!(uart, "REPLY_FLAG 0x{:X?}\r", REPLY_FLAG).ok().unwrap();
     uart.write_full_blocking(b"-----------------\r\n");
 
     // --- get_fw_version() ---
@@ -381,21 +384,23 @@ fn main() -> ! {
 
     spi_drv.esp_deselect();
     uart.write_full_blocking(b"esp_deselect()\r\n");
-    */
 
-    /*
+    uart.write_full_blocking(b"\r\nNow waiting for firmware version response...\r\n");
     uart.write_full_blocking(b"wait_for_esp_select()\r\n");
     spi_drv.wait_for_esp_select();
     uart.write_full_blocking(b"\tesp selected\r\n");
 
     // Get the ESP32 firmware version
     uart.write_full_blocking(b"wait_response_cmd()\r\n");
-    let wait_response = spi_drv.wait_response_cmd(GET_FW_VERSION, 1);
+    let wait_response = spi_drv.wait_response_cmd(&mut uart, GET_FW_VERSION, 1);
     match wait_response {
         Ok(params) => {
-            writeln!(uart, "\tESP32 firmware version: {:?}\r\n", params[0])
-                .ok()
-                .unwrap();
+            write!(uart, "\tESP32 firmware version: ").ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
         }
         Err(e) => {
             writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
@@ -407,69 +412,23 @@ fn main() -> ! {
 
     spi_drv.esp_deselect();
     uart.write_full_blocking(b"esp_deselect()\r\n");
-    */
 
     // --- end get_fw_version() ---
 
-    // write 0x37, then check the return
-    // let send_success = spi.send(GET_FW_VERSION);
-    // match send_success {
-    //     Ok(_) => {
-    //         spi_drv.esp_deselect();
-    //         //spi_cs.set_high().unwrap();
-    //         spi_drv.wait_for_esp_select();
+    let mut led_pin = pins.gpio25.into_push_pull_output();
 
-    //         spi_drv.wait_response_cmd();
-    //         // We succeeded, check the read value
-    //         // if let Ok(x) = spi.read() {
-    //         //     // We got back `x` in exchange for the 0x37 we sent.
-    //         //     writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
-    //         // };
-
-    //         spi_drv.esp_deselect();
-    //     }
-    //     Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
-    // }
-
-
-    // Do a read+write at the same time. Data in `buffer` will be replaced with
-    // the data read from the SPI device.
-    //let mut buffer: [u8; 4] = [1, 2, 3, 4];
-    //let transfer_success = spi.transfer(&mut buffer);
-    //#[allow(clippy::single_match)]
-    //match transfer_success {
-    //    Ok(_) => {}  // Handle success
-    //    Err(_) => {} // handle errors
-    //};
-
-    let mut i: u64 = 0;
+    let mut i: u32 = 0;
     loop {
+        if i % 2 == 0 {
+            led_pin.set_high().unwrap();
+        } else {
+            led_pin.set_low().unwrap();
+        }
+
         write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
-        delay.delay_ms(10000);
+
+        delay.delay_ms(1000);
         i += 1;
-        // spi_cs.set_low().unwrap();
-        // delay.delay_ms(5);
-        // spi_cs.set_high().unwrap();
-        // delay.delay_ms(10);
-
-        // spi_cs.set_low().unwrap();
-
-        // // write 0x37, then check the return
-        // let send_success = spi.send(GET_FW_VERSION);
-        // match send_success {
-        //     Ok(_) => {
-        //         // We succeeded, check the read value
-        //         if let Ok(x) = spi.read() {
-        //             // We got back `x` in exchange for the 0x37 we sent.
-        //             writeln!(uart, "ESP32 firmware version: {:?}\r\n", x).ok().unwrap();
-        //         };
-        //     }
-        //     Err(e) => writeln!(uart, "ESP32 SPI send GET_FW_VERSION err: {:?}\r\n", e).ok().unwrap()
-        // }
-    
-        // spi_cs.set_high().unwrap();
-
-        // delay.delay_ms(1000);
     }
 }
 
