@@ -2,6 +2,9 @@
 //!
 //! This application demonstrates how to use the SPI Driver to talk to a remote
 //! ESP32 wifi SPI device.
+//! 
+//! It's based off of the Pimoroni C++ code located here:
+//! https://github.com/pimoroni/pimoroni-pico/tree/main/examples/pico_wireless
 //!
 //! See the `Cargo.toml` file for Copyright and licence details.
 
@@ -137,7 +140,6 @@ impl SpiDrv {
     fn get_param(&mut self) -> Result<u8, nb::Error<core::convert::Infallible>> {
         // Blocking read, don't return until we've read a byte successfully
         loop {
-            //let read_result = self.spi.read();
             let word_out = &mut[DUMMY_DATA];
             let read_result = self.spi.transfer(word_out);
             match read_result {
