@@ -60,7 +60,13 @@ const DATA_FLAG: u8 = 0x40u8;
 
 const PARAMS_ARRAY_LEN: usize = 8;
 
+const ESP_LED_R: u8 = 25;
+const ESP_LED_G: u8 = 26;
+const ESP_LED_B: u8 = 27;
+
 const GET_FW_VERSION: u8 = 0x37u8;
+
+const SET_ANALOG_WRITE: u8 = 0x51u8;
 
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
@@ -214,6 +220,11 @@ impl SpiDrv {
                                 uart.write_full_blocking(b"\tSuccess: read_and_check_byte(num_param)\r\n");
                                 let num_param_read: usize = self.get_param().ok().unwrap() as usize;
                                 write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read).ok().unwrap();
+                                if num_param_read > PARAMS_ARRAY_LEN {
+                                    // TODO: refactor the type of error this method returns away from nb::Error,
+                                    // perhaps to something custom
+                                    return Err(nb::Error::WouldBlock);
+                                }
                                 let mut i: usize = 0;
                                 let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
                                 while i < num_param_read {
@@ -274,6 +285,124 @@ impl SpiDrv {
         }
         Ok(())
     }
+
+    fn send_param_len8(&mut self, param_len: u8) -> SpiResult<()> {
+        let buf: [u8; 1] = [param_len];
+        let transfer_results = self.spi.send(buf[0]);
+        match transfer_results {
+            Ok(_) => { return Ok(()); }
+            Err(e) => { return Err(e); }
+        }
+    }
+
+    // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
+    fn send_param(&mut self, param: u8, param_len: u8, last_param: bool) -> SpiResult<()> {
+        let res = self.send_param_len8(param_len);
+        match res {
+            Ok(_) => {
+                let buf: [u8; 1] = [ param ];
+                // TODO: this doesn't quite match the C++ code yet, seems it can send a
+                // variable length buf
+                let transfer_results = self.spi.send(buf[0]);
+                match transfer_results {
+                    Ok(_) => {
+                        if last_param {
+                            let buf: [u8; 1] = [END_CMD];
+                            let transfer_results = self.spi.send(buf[0]);
+                            match transfer_results {
+                                Ok(_) => { return Ok(()); }
+                                Err(e) => { return Err(e); }
+                            } 
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => { return Err(e); }
+                }
+            }
+            Err(e) => { return Err(e); }
+        }
+    }
+
+    // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
+    fn send_param_word(&mut self, param: u16, last_param: bool) -> SpiResult<()> {
+        let res = self.send_param_len8(2);
+        match res {
+            Ok(_) => {
+                let buf: [u8; 2] = [ ((param & 0xff00) >> 8) as u8, (param & 0xff) as u8 ];
+                // FIXME: send both buf bytes, not just the first one
+                let transfer_results = self.spi.send(buf[0]);
+                match transfer_results {
+                    Ok(_) => {
+                        if last_param {
+                            let buf: [u8; 1] = [END_CMD];
+                            let transfer_results = self.spi.send(buf[0]);
+                            match transfer_results {
+                                Ok(_) => { return Ok(()); }
+                                Err(e) => { return Err(e); }
+                            } 
+                        } else {
+                            return Ok(());
+                        }
+                    }
+                    Err(e) => { return Err(e); }
+                }
+            }
+            Err(e) => { return Err(e); }
+        }
+    }
+}
+
+fn set_led(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, red: u8, green: u8, blue: u8) {
+    write!(uart, "\tanalog_write(ESP_LED_R, {:?})\r\n", 255 - red).ok().unwrap();
+    analog_write(spi_drv, uart, ESP_LED_R, 255 - red);
+
+    write!(uart, "\tanalog_write(ESP_LED_G, {:?})\r\n", 255 - green).ok().unwrap();
+    analog_write(spi_drv, uart, ESP_LED_G, 255 - green);
+
+    write!(uart, "\tanalog_write(ESP_LED_B, {:?})\r\n", 255 - blue).ok().unwrap();
+    analog_write(spi_drv, uart, ESP_LED_B, 255 - blue);
+}
+
+fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8) {
+    uart.write_full_blocking(b"\twait_for_esp_select()\r\n");
+    spi_drv.wait_for_esp_select();
+
+    uart.write_full_blocking(b"\tsend_cmd(SET_ANALOG_WRITE)\r\n");
+    spi_drv.send_cmd(uart, SET_ANALOG_WRITE, 2).ok().unwrap();
+    uart.write_full_blocking(b"\tsend_param(pin)\r\n");
+    spi_drv.send_param(pin, 1, false).ok().unwrap();
+    uart.write_full_blocking(b"\tsend_param(value)\r\n");
+    spi_drv.send_param(value, 1, true).ok().unwrap();
+
+    uart.write_full_blocking(b"\tread_byte()\r\n");
+    spi_drv.read_byte().ok().unwrap();
+
+    uart.write_full_blocking(b"\tesp_deselect()\r\n");
+    spi_drv.esp_deselect();
+    uart.write_full_blocking(b"\twait_for_esp_select()\r\n");
+    spi_drv.wait_for_esp_select();
+
+    // Wait for a reply from ESP32
+    let data: u8 = 0;
+    uart.write_full_blocking(b"\twait_response_cmd()\r\n");
+    let wait_response = spi_drv.wait_response_cmd(uart, SET_ANALOG_WRITE, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tSET_ANALOG_WRITE: ").ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(SET_ANALOG_WRITE) Err: {:?}\r", e).ok().unwrap();
+        }
+    }
+
+    uart.write_full_blocking(b"\tesp_deselect()\r\n");
+    spi_drv.esp_deselect();
 }
 
 /// Entry point to our bare-metal application.
@@ -363,6 +492,8 @@ fn main() -> ! {
 
     spi_drv.init();
     spi_drv.reset(&mut delay);
+
+    //set_led(&mut spi_drv, &mut uart, 0, 0, 0);
 
     delay.delay_ms(500);
 
