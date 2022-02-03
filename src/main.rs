@@ -66,7 +66,7 @@ const ESP_LED_B: u8 = 27;
 
 const GET_FW_VERSION: u8 = 0x37u8;
 
-const SET_ANALOG_WRITE: u8 = 0x51u8;
+const SET_ANALOG_WRITE: u8 = 0x52u8;
 
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
@@ -143,7 +143,7 @@ impl SpiDrv {
         self.wait_for_esp_ack();
     }
 
-    fn get_param(&mut self) -> Result<u8, nb::Error<core::convert::Infallible>> {
+    fn get_param(&mut self, uart: &mut EnabledUart) -> Result<u8, nb::Error<core::convert::Infallible>> {
         // Blocking read, don't return until we've read a byte successfully
         loop {
             let word_out = &mut[DUMMY_DATA];
@@ -151,6 +151,7 @@ impl SpiDrv {
             match read_result {
                 Ok(word) => {
                     let byte: u8 = word[0] as u8;
+                    write!(uart, "\tget_param(): 0x{:X?}\r\n", byte).ok().unwrap();
                     return Ok(byte);
                 }
                 Err(e) => { continue; }
@@ -158,27 +159,31 @@ impl SpiDrv {
         }
     }
 
-    fn read_byte(&mut self) -> SpiResult<u8> {
-        let result = self.get_param();
+    fn read_byte(&mut self, uart: &mut EnabledUart) -> SpiResult<u8> {
+        let result = self.get_param(uart);
         match result {
             Ok(byte_out) => { return Ok(byte_out); }
             Err(e) => { return Err(e); }
         }
     }
 
-    fn read_and_check_byte(&mut self, check_byte: u8) -> SpiResult<bool> {
-        let result = self.get_param();
+    fn read_and_check_byte(&mut self, uart: &mut EnabledUart, check_byte: u8) -> SpiResult<bool> {
+        let result = self.get_param(uart);
         match result {
-            Ok(byte_out) => { return Ok(byte_out == check_byte); }
+            Ok(byte_out) => {
+                write!(uart, "\tread_and_check_byte(): 0x{:X?} == 0x{:X?}: {:?}\r\n",
+                    byte_out, check_byte, byte_out == check_byte).ok().unwrap();
+                return Ok(byte_out == check_byte);
+            }
             Err(e) => { return Err(e); }
         }
     }
 
-    fn wait_for_byte(&mut self, wait_byte: u8) -> SpiResult<bool> {
+    fn wait_for_byte(&mut self, uart: &mut EnabledUart, wait_byte: u8) -> SpiResult<bool> {
         let mut timeout: u16 = 1000u16;
 
         loop {
-            let result = self.read_byte();
+            let result = self.read_byte(uart);
             match result {
                 Ok(byte_read) => {
                     if byte_read == ERR_CMD {
@@ -195,8 +200,8 @@ impl SpiDrv {
         }
     }
 
-    fn check_start_cmd(&mut self) -> SpiResult<bool> {
-        let result = self.wait_for_byte(START_CMD);
+    fn check_start_cmd(&mut self, uart: &mut EnabledUart) -> SpiResult<bool> {
+        let result = self.wait_for_byte(uart, START_CMD);
         match result {
             Ok(b) => { return Ok(b); }
             Err(e) => { return Err(e); }
@@ -206,19 +211,19 @@ impl SpiDrv {
     fn wait_response_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
         // TODO: can we turn this into more of a functional syntax to clean
         // up the deep nesting? Investigate `map` for `Result` in Rust by Example
-        let result = self.check_start_cmd();
+        let result = self.check_start_cmd(uart);
         match result {
             Ok(b) => {
                 uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
-                let check_result = self.read_and_check_byte(cmd | REPLY_FLAG);
+                let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
                 match check_result {
                     Ok(_) => {
                         uart.write_full_blocking(b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n");
-                        let check_result = self.read_and_check_byte(num_param);
+                        let check_result = self.read_and_check_byte(uart, num_param);
                         match check_result {
                             Ok(_) => {
                                 uart.write_full_blocking(b"\tSuccess: read_and_check_byte(num_param)\r\n");
-                                let num_param_read: usize = self.get_param().ok().unwrap() as usize;
+                                let num_param_read: usize = self.get_param(uart).ok().unwrap() as usize;
                                 write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read).ok().unwrap();
                                 if num_param_read > PARAMS_ARRAY_LEN {
                                     // TODO: refactor the type of error this method returns away from nb::Error,
@@ -228,12 +233,12 @@ impl SpiDrv {
                                 let mut i: usize = 0;
                                 let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
                                 while i < num_param_read {
-                                    params[i] = self.get_param().ok().unwrap();
+                                    params[i] = self.get_param(uart).ok().unwrap();
                                     write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i]).ok().unwrap();
                                     i += 1;
                                 }
 
-                                let check_result = self.read_and_check_byte(END_CMD);
+                                let check_result = self.read_and_check_byte(uart, END_CMD);
                                 match check_result {
                                     Ok(_) => {
                                         uart.write_full_blocking(b"\tSuccess: read_and_check_byte(END_CMD)\r\n");
@@ -354,13 +359,13 @@ impl SpiDrv {
 }
 
 fn set_led(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, red: u8, green: u8, blue: u8) {
-    write!(uart, "\tanalog_write(ESP_LED_R, {:?})\r\n", 255 - red).ok().unwrap();
+    write!(uart, "Calling analog_write(ESP_LED_R, {:?})\r\n", 255 - red).ok().unwrap();
     analog_write(spi_drv, uart, ESP_LED_R, 255 - red);
 
-    write!(uart, "\tanalog_write(ESP_LED_G, {:?})\r\n", 255 - green).ok().unwrap();
+    write!(uart, "Calling analog_write(ESP_LED_G, {:?})\r\n", 255 - green).ok().unwrap();
     analog_write(spi_drv, uart, ESP_LED_G, 255 - green);
 
-    write!(uart, "\tanalog_write(ESP_LED_B, {:?})\r\n", 255 - blue).ok().unwrap();
+    write!(uart, "Calling analog_write(ESP_LED_B, {:?})\r\n", 255 - blue).ok().unwrap();
     analog_write(spi_drv, uart, ESP_LED_B, 255 - blue);
 }
 
@@ -373,10 +378,10 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     uart.write_full_blocking(b"\tsend_param(pin)\r\n");
     spi_drv.send_param(pin, 1, false).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(value)\r\n");
-    spi_drv.send_param(value, 1, true).ok().unwrap();
+    spi_drv.send_param(value, 1, true).ok().unwrap(); // LAST_PARAM
 
     uart.write_full_blocking(b"\tread_byte()\r\n");
-    spi_drv.read_byte().ok().unwrap();
+    spi_drv.read_byte(uart).ok().unwrap();
 
     uart.write_full_blocking(b"\tesp_deselect()\r\n");
     spi_drv.esp_deselect();
@@ -493,10 +498,11 @@ fn main() -> ! {
     spi_drv.init();
     spi_drv.reset(&mut delay);
 
-    //set_led(&mut spi_drv, &mut uart, 0, 0, 0);
+    set_led(&mut spi_drv, &mut uart, 0, 0, 0);
 
     delay.delay_ms(500);
 
+/*
     uart.write_full_blocking(b"-----------------\r\n");
     writeln!(uart, "START_CMD 0x{:X?}\r", START_CMD).ok().unwrap();
     writeln!(uart, "END_CMD 0x{:X?}\r", END_CMD).ok().unwrap();
@@ -547,7 +553,7 @@ fn main() -> ! {
     uart.write_full_blocking(b"esp_deselect()\r\n");
 
     // --- end get_fw_version() ---
-
+*/
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     let mut i: u32 = 0;
