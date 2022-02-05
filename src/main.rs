@@ -147,11 +147,12 @@ impl SpiDrv {
         // Blocking read, don't return until we've read a byte successfully
         loop {
             let word_out = &mut[DUMMY_DATA];
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA).ok().unwrap();
             let read_result = self.spi.transfer(word_out);
             match read_result {
                 Ok(word) => {
                     let byte: u8 = word[0] as u8;
-                    write!(uart, "\tget_param(): 0x{:X?}\r\n", byte).ok().unwrap();
+                    write!(uart, "get_param() read byte: 0x{:X?}\r\n", byte).ok().unwrap();
                     return Ok(byte);
                 }
                 Err(e) => { continue; }
@@ -210,7 +211,7 @@ impl SpiDrv {
 
     fn wait_response_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
         // TODO: can we turn this into more of a functional syntax to clean
-        // up the deep nesting? Investigate `map` for `Result` in Rust by Example
+        // up the deep nesting? Investigate `map` for `Result` in Rust by Example, or use of Combinators
         let result = self.check_start_cmd(uart);
         match result {
             Ok(b) => {
@@ -274,63 +275,87 @@ impl SpiDrv {
                             num_param];
         for byte in buf {
             let byte_buf = &mut[byte];
-            // let transfer_results = self.spi.send(byte);
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", byte).ok().unwrap();
             let transfer_results = self.spi.transfer(byte_buf);
             match transfer_results {
                 Ok(byte) => { 
-                  write!(uart, "\tsend_cmd successful: 0x{:X?}\r\n", byte).ok().unwrap();
+                  write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
                   continue; 
                 }
                 Err(e) => {
-                  write!(uart, "\tsend_cmd error: 0x{:X?}\r\n", e).ok().unwrap();
+                  write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e).ok().unwrap();
                   continue; 
                 }
             }
         }
 
         if num_param == 0 {
-            let buf: [u8; 1] = [END_CMD];
-            let transfer_results = self.spi.send(buf[0]);
+            let byte_buf = &mut[END_CMD];
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", END_CMD).ok().unwrap();
+            let transfer_results = self.spi.transfer(byte_buf);
             match transfer_results {
-                Ok(_) => { return Ok(()); }
-                Err(e) => { return Err(e); }
+                Ok(byte) => {
+                    write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                    return Ok(()
+                ); }
+                Err(e) => {
+                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                    return Err(nb::Error::WouldBlock);
+                }
             }
         }
         Ok(())
     }
 
-    fn send_param_len8(&mut self, param_len: u8) -> SpiResult<()> {
-        let buf: [u8; 1] = [param_len];
-        let transfer_results = self.spi.send(buf[0]);
+    fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
+        let byte_buf = &mut[param_len];
+        write!(uart, "\t\tsending byte: 0x{:X?} -> ", param_len).ok().unwrap();
+        let transfer_results = self.spi.transfer(byte_buf);
         match transfer_results {
-            Ok(_) => { return Ok(()); }
-            Err(e) => { return Err(e); }
+            Ok(byte) => {
+                write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                return Ok(());
+            }
+            Err(e) => {
+                return Err(nb::Error::WouldBlock);
+            }
         }
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-    fn send_param(&mut self, param: u8, param_len: u8, last_param: bool) -> SpiResult<()> {
-        let res = self.send_param_len8(param_len);
+    fn send_param(&mut self, uart: &mut EnabledUart, param: u8, param_len: u8, last_param: bool) -> SpiResult<()> {
+        let res = self.send_param_len8(uart, param_len);
         match res {
             Ok(_) => {
-                let buf: [u8; 1] = [ param ];
                 // TODO: this doesn't quite match the C++ code yet, seems it can send a
                 // variable length buf
-                let transfer_results = self.spi.send(buf[0]);
+                let byte_buf = &mut[param];
+                write!(uart, "\t\tsending byte: 0x{:X?} -> ", param).ok().unwrap();
+                let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
-                    Ok(_) => {
+                    Ok(byte) => {
+                        write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
                         if last_param {
-                            let buf: [u8; 1] = [END_CMD];
-                            let transfer_results = self.spi.send(buf[0]);
+                            write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", param).ok().unwrap();
+                            let transfer_results = self.spi.transfer(byte_buf);
                             match transfer_results {
-                                Ok(_) => { return Ok(()); }
-                                Err(e) => { return Err(e); }
+                                Ok(byte) => {
+                                    write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    write!(uart, "send_param transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                                    return Err(nb::Error::WouldBlock);
+                                }
                             } 
                         } else {
                             return Ok(());
                         }
                     }
-                    Err(e) => { return Err(e); }
+                    Err(e) => {
+                        write!(uart, "send_param transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                        return Err(nb::Error::WouldBlock);
+                    }
                 }
             }
             Err(e) => { return Err(e); }
@@ -338,17 +363,19 @@ impl SpiDrv {
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-    fn send_param_word(&mut self, param: u16, last_param: bool) -> SpiResult<()> {
-        let res = self.send_param_len8(2);
+    fn send_param_word(&mut self, uart: &mut EnabledUart, param: u16, last_param: bool) -> SpiResult<()> {
+        let res = self.send_param_len8(uart, 2);
         match res {
             Ok(_) => {
                 let buf: [u8; 2] = [ ((param & 0xff00) >> 8) as u8, (param & 0xff) as u8 ];
                 // FIXME: send both buf bytes, not just the first one
+                // FIXME: switch to using transfer(), not send()
                 let transfer_results = self.spi.send(buf[0]);
                 match transfer_results {
                     Ok(_) => {
                         if last_param {
                             let buf: [u8; 1] = [END_CMD];
+                            // FIXME: switch to using transfer(), not send()
                             let transfer_results = self.spi.send(buf[0]);
                             match transfer_results {
                                 Ok(_) => { return Ok(()); }
@@ -384,9 +411,9 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     uart.write_full_blocking(b"\tsend_cmd(SET_ANALOG_WRITE)\r\n");
     spi_drv.send_cmd(uart, SET_ANALOG_WRITE, 2).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(pin)\r\n");
-    spi_drv.send_param(pin, 1, false).ok().unwrap();
+    spi_drv.send_param(uart, pin, 1, false).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(value)\r\n");
-    spi_drv.send_param(value, 1, true).ok().unwrap(); // LAST_PARAM
+    spi_drv.send_param(uart, value, 1, true).ok().unwrap(); // LAST_PARAM
 
     uart.write_full_blocking(b"\tread_byte()\r\n");
     spi_drv.read_byte(uart).ok().unwrap();
@@ -506,11 +533,18 @@ fn main() -> ! {
     spi_drv.init();
     spi_drv.reset(&mut delay);
 
+    // Turn the ESP32's onboard multi-color LED off
     set_led(&mut spi_drv, &mut uart, 0, 0, 0);
-
     delay.delay_ms(500);
 
-/*
+    set_led(&mut spi_drv, &mut uart, 255, 0, 0);
+    delay.delay_ms(1000);
+    set_led(&mut spi_drv, &mut uart, 0, 255, 0);
+    delay.delay_ms(1000);
+    set_led(&mut spi_drv, &mut uart, 0, 0, 255);
+    delay.delay_ms(1000);
+    set_led(&mut spi_drv, &mut uart, 100, 100, 100);
+
     uart.write_full_blocking(b"-----------------\r\n");
     writeln!(uart, "START_CMD 0x{:X?}\r", START_CMD).ok().unwrap();
     writeln!(uart, "END_CMD 0x{:X?}\r", END_CMD).ok().unwrap();
@@ -561,7 +595,7 @@ fn main() -> ! {
     uart.write_full_blocking(b"esp_deselect()\r\n");
 
     // --- end get_fw_version() ---
-*/
+
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     let mut i: u32 = 0;
