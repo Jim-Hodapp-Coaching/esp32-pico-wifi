@@ -187,7 +187,7 @@ impl SpiDrv {
             match result {
                 Ok(byte_read) => {
                     if byte_read == ERR_CMD {
-                        return Ok(false);
+                        return Err(nb::Error::WouldBlock);
                     } else if byte_read == wait_byte {
                         return Ok(true);
                     } else if timeout == 0 {
@@ -273,10 +273,18 @@ impl SpiDrv {
                             cmd & !(REPLY_FLAG),
                             num_param];
         for byte in buf {
-            let transfer_results = self.spi.send(byte);
+            let byte_buf = &mut[byte];
+            // let transfer_results = self.spi.send(byte);
+            let transfer_results = self.spi.transfer(byte_buf);
             match transfer_results {
-                Ok(_) => { continue; }
-                Err(e) => { continue; }
+                Ok(byte) => { 
+                  write!(uart, "\tsend_cmd successful: 0x{:X?}\r\n", byte).ok().unwrap();
+                  continue; 
+                }
+                Err(e) => {
+                  write!(uart, "\tsend_cmd error: 0x{:X?}\r\n", e).ok().unwrap();
+                  continue; 
+                }
             }
         }
 
