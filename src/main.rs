@@ -400,26 +400,12 @@ impl SpiDrv {
         }
     }
 
-    fn send_param_string(&mut self, uart: &mut EnabledUart, param_string: String<STR_LEN>, last_param: bool) -> SpiResult<()> {
-      let mut i: u8 = 0;
-      let mut param_bytes: String<STR_LEN> = param_string.into_bytes().iter().rev().collect();
-      loop {
-        let byte = match param_bytes.pop() {
-            Some(byte) => byte,
-            None => return Ok(())
-        };
-        let mut param: Params = Params::new();
-        param.push(byte).unwrap();
-        let result = self.send_param(uart, param, 1, last_param);
-        // Exit when we reach a '\n':
-        if byte == 0xD {
-           return result;
-        }
-        i += 1;
-        if i == STR_LEN as u8 {
-           return result;
-        }
-      }
+    fn send_param_string(&mut self, uart: &mut EnabledUart, param_string: String<STR_LEN>, last_param: bool) -> () {
+        param_string.into_bytes().iter().for_each(|byte| {
+            let mut param: Params = Params::new();
+            param.push(*byte).unwrap();
+            self.send_param(uart, param, 1, last_param);
+        });
     }
 }
 
