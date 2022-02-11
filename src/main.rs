@@ -400,10 +400,17 @@ impl SpiDrv {
         }
     }
 
-    fn send_param_string(&mut self, uart: &mut EnabledUart, param_string: String<STR_LEN>, last_param: bool) -> () {
-        param_string.into_bytes().iter().for_each(|byte| {
+    fn send_param_string(&mut self, uart: &mut EnabledUart, param_string: String<STR_LEN>) -> () {
+        let param_bytes: Vec<u8, STR_LEN> = param_string.into_bytes();
+        param_bytes.iter().enumerate().for_each(|(i, byte)| {
             let mut param: Params = Params::new();
             param.push(*byte).unwrap();
+            // set last_param to true if this is the last byte in the sequence
+            let last_param: bool = i == (param_bytes.len() - 1);
+            write!(uart, "\tsend_param_string() is sending ascii character: {}\r\n", *byte as char);
+
+            if last_param { uart.write_full_blocking(b"\tsend_param_string() sending last_param\r\n"); };
+            
             self.send_param(uart, param, 1, last_param);
         });
     }
@@ -471,7 +478,7 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, ssid: Strin
 
     // Send Command
     spi_drv.send_cmd(uart, SET_PASSPHRASE, 2);
-    spi_drv.send_param_string(uart, ssid, false);
+    spi_drv.send_param_string(uart, ssid);
  
     spi_drv.esp_deselect();
 
@@ -629,7 +636,7 @@ fn main() -> ! {
 
     // --- end get_fw_version() ---
 
-    wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("creamandshug\n"), String::from("password\n"));
+    wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("creamandshug"), String::from("password"));
 
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
