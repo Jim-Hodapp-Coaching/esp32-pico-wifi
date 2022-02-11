@@ -78,7 +78,8 @@ type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 type EnabledUart = hal::uart::UartPeripheral<rp2040_hal::uart::Enabled, pac::UART0,
     (rp2040_hal::gpio::Pin<Gpio0, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>, rp2040_hal::gpio::Pin<Gpio1, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>)>;
 
-type Params = Vec::<u8, PARAMS_ARRAY_LEN>;
+//type Params = Vec::<u8, PARAMS_ARRAY_LEN>;
+type Params = [u8];
 
 struct Esp32Pins {
     cs: Pin<Gpio7, hal::gpio::PushPullOutput>,
@@ -330,22 +331,26 @@ impl SpiDrv {
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-    fn send_param(&mut self, uart: &mut EnabledUart, params: Params, param_len: u8, last_param: bool) -> SpiResult<()> {
+    fn send_param(&mut self, uart: &mut EnabledUart, params: &mut Params, last_param: bool) -> SpiResult<()> {
+        let param_len: u8 = params.len() as u8;
         let res = self.send_param_len8(uart, param_len);
         match res {
             Ok(_) => {
                 // TODO: this doesn't quite match the C++ code yet, seems it can send a
                 // variable length buf
-                let byte_buf = &mut[params[0]];
-                write!(uart, "\t\tsending byte: 0x{:X?} -> ", params[0]).ok().unwrap();
+                // let mut byte_buf: [u8; param_len] =  params.into_array().unwrap();
+                // let byte_buf = &mut[params[0]];
+                let byte_buf = params;
+                //write!(uart, "\t\tsending bytes: 0x{:X?} -> ", params).ok().unwrap();
   
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
-                    Ok(byte) => {
-                        write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                    Ok(transfer_buf) => {
+                        write!(uart, "read bytes: 0x{:X?}\r\n", transfer_buf).ok().unwrap();
                         if last_param {
-                            write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", params[0]).ok().unwrap();
-                            let transfer_results = self.spi.transfer(byte_buf);
+                            let end_command = &mut[END_CMD];
+                            write!(uart, "sending byte: 0x{:X?} -> ", end_command).ok().unwrap();
+                            let transfer_results = self.spi.transfer(end_command);
                             match transfer_results {
                                 Ok(byte) => {
                                     write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
@@ -401,18 +406,19 @@ impl SpiDrv {
     }
 
     fn send_param_string(&mut self, uart: &mut EnabledUart, param_string: String<STR_LEN>) -> () {
-        let param_bytes: Vec<u8, STR_LEN> = param_string.into_bytes();
-        param_bytes.iter().enumerate().for_each(|(i, byte)| {
-            let mut param: Params = Params::new();
-            param.push(*byte).unwrap();
-            // set last_param to true if this is the last byte in the sequence
-            let last_param: bool = i == (param_bytes.len() - 1);
-            write!(uart, "\tsend_param_string() is sending ascii character: {}\r\n", *byte as char);
+        // let param_bytes: Vec<u8, STR_LEN> = param_string.into_bytes();
+        let param_bytes: &[u8] = param_string.as_bytes();
+        // param_bytes.iter().enumerate().for_each(|(i, byte)| {
+        //     let mut param: Params = Params::new();
+        //     param.push(*byte).unwrap();
+        //     // set last_param to true if this is the last byte in the sequence
+        //     let last_param: bool = i == (param_bytes.len() - 1);
+        //     write!(uart, "\tsend_param_string() is sending ascii character: {}\r\n", *byte as char);
 
-            if last_param { uart.write_full_blocking(b"\tsend_param_string() sending last_param\r\n"); };
-            
-            self.send_param(uart, param, 1, last_param);
-        });
+        //     if last_param { uart.write_full_blocking(b"\tsend_param_string() sending last_param\r\n"); };
+
+        //     self.send_param(uart, param, last_param);
+        // });
     }
 }
 
@@ -435,13 +441,11 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     uart.write_full_blocking(b"\tsend_cmd(SET_ANALOG_WRITE)\r\n");
     spi_drv.send_cmd(uart, SET_ANALOG_WRITE, 2).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(pin)\r\n");
-    let mut pin_param: Params = Params::new();
-    pin_param.push(pin).unwrap();
-    spi_drv.send_param(uart, pin_param, 1, false).ok().unwrap();
+    let pin_byte: &mut [u8] = &mut [pin];
+    spi_drv.send_param(uart, pin_byte, false).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(value)\r\n");
-    let mut value_param: Params = Params::new();
-    value_param.push(value).unwrap();
-    spi_drv.send_param(uart, value_param, 1, true).ok().unwrap(); // LAST_PARAM
+    let value_byte: &mut [u8] = &mut [value];
+    spi_drv.send_param(uart, value_byte, true).ok().unwrap(); // LAST_PARAM
 
     uart.write_full_blocking(b"\tread_byte()\r\n");
     spi_drv.read_byte(uart).ok().unwrap();
@@ -478,7 +482,11 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, ssid: Strin
 
     // Send Command
     spi_drv.send_cmd(uart, SET_PASSPHRASE, 2);
-    spi_drv.send_param_string(uart, ssid);
+    // let ssid_bytes: &mut [u8] = ssid.as_bytes().as_mut();
+    //let ssid_bytes: &[u8] = ssid.as_bytes();
+    let ssid_bytes: &[u8] = ssid.as_bytes();
+    let (_, bytes) = ssid_bytes.split_at_mut(ssid_bytes.len() - 1);
+    spi_drv.send_param(uart, bytes, true);
  
     spi_drv.esp_deselect();
 
