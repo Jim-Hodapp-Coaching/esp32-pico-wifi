@@ -420,6 +420,13 @@ impl SpiDrv {
         //     self.send_param(uart, param, last_param);
         // });
     }
+
+    fn pad_to_multiple_of_4(&mut self, uart: &mut EnabledUart, mut cmd: u8) {
+        while cmd % 4 == 0 {
+            self.read_byte(uart);
+            cmd += 1;
+        }
+    }
 }
 
 
