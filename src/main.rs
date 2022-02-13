@@ -420,6 +420,14 @@ impl SpiDrv {
         //     self.send_param(uart, param, last_param);
         // });
     }
+
+    fn pad_to_multiple_of_4(&mut self, uart: &mut EnabledUart, cmd: u8) {
+        let mut cmd_to_pad = cmd;
+        while cmd_to_pad % 4 == 0 {
+            self.read_byte(uart);
+            cmd_to_pad += 1;
+        }
+    }
 }
 
 
@@ -477,17 +485,43 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     spi_drv.esp_deselect();
 }
 
-fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, ssid: String<STR_LEN>, passphrase: String<STR_LEN>) -> bool {
+unsafe fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
     spi_drv.wait_for_esp_select();
 
     // Send Command
     spi_drv.send_cmd(uart, SET_PASSPHRASE, 2);
-    // let ssid_bytes: &mut [u8] = ssid.as_bytes().as_mut();
-    //let ssid_bytes: &[u8] = ssid.as_bytes();
-    let ssid_bytes: &[u8] = ssid.as_bytes();
+
+    let ssid_bytes: &mut [u8] = ssid.as_bytes_mut();
     let (_, bytes) = ssid_bytes.split_at_mut(ssid_bytes.len() - 1);
+    spi_drv.send_param(uart, bytes, false);
+
+    let passphrase_bytes: &mut [u8] = passphrase.as_bytes_mut();
+    let (_, bytes) = passphrase_bytes.split_at_mut(passphrase_bytes.len() - 1);
     spi_drv.send_param(uart, bytes, true);
+
+    let padding: u8 = 6 + ssid.len() as u8 + passphrase.len() as u8;
+    spi_drv.pad_to_multiple_of_4(uart, padding);
  
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    // Wait for reply
+    let data: u8 = 0;
+    let wait_response = spi_drv.wait_response_cmd(uart, SET_PASSPHRASE, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\twifi_set_passphrase_response: ").ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\twifi_set_passphrase_response Err: {:?}\r", e).ok().unwrap();
+        }
+    }
+
     spi_drv.esp_deselect();
 
     true
@@ -643,8 +677,9 @@ fn main() -> ! {
     uart.write_full_blocking(b"esp_deselect()\r\n");
 
     // --- end get_fw_version() ---
-
-    wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("creamandshug"), String::from("password"));
+    unsafe {
+        wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("toya1234568261517"), String::from("35487804"));
+    }
 
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
