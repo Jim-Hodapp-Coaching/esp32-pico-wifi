@@ -70,6 +70,7 @@ const ESP_LED_B: u8 = 27;
 
 const SET_PASSPHRASE: u8 = 0x11u8;
 const GET_FW_VERSION: u8 = 0x37u8;
+const GET_CONN_STATUS: u8 = 0x20u8;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 
@@ -527,6 +528,38 @@ unsafe fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut 
     true
 }
 
+fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
+    spi_drv.wait_for_esp_select(); 
+   
+    // Send Command
+    spi_drv.send_cmd(uart, GET_CONN_STATUS, 0);
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    // Wait for reply
+    let data: u8 = 0;
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tget_connection_status_response: ").ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e).ok().unwrap();
+        }
+    }
+
+    spi_drv.esp_deselect();
+
+    true
+}
+
+
 /// Entry point to our bare-metal application.
 ///
 /// The `#[entry]` macro ensures the Cortex-M start-up code calls this function
@@ -680,6 +713,8 @@ fn main() -> ! {
     unsafe {
         wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("toya1234568261517"), String::from("35487804"));
     }
+    delay.delay_ms(1000);
+    get_connection_status(&mut spi_drv, &mut uart);
 
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
