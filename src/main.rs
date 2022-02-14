@@ -422,11 +422,10 @@ impl SpiDrv {
         // });
     }
 
-    fn pad_to_multiple_of_4(&mut self, uart: &mut EnabledUart, cmd: u8) {
-        let mut cmd_to_pad = cmd;
-        while cmd_to_pad % 4 == 0 {
+    fn pad_to_multiple_of_4(&mut self, uart: &mut EnabledUart, mut cmd: u8) {
+        while cmd % 4 == 0 {
             self.read_byte(uart);
-            cmd_to_pad += 1;
+            cmd += 1;
         }
     }
 }
