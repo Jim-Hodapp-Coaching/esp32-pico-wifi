@@ -633,6 +633,7 @@ fn main() -> ! {
     spi_drv.init();
     spi_drv.reset(&mut delay);
 
+    // Set wifi passphrase - ESP32 will attempt to connect after receving this cmd
     unsafe {
         wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
     }
@@ -642,6 +643,7 @@ fn main() -> ! {
 
     let mut i: u32 = 0;
     loop {
+        // Check for connection in loop and set led on if connected succesfully
         let connected = get_connection_status(&mut spi_drv, &mut uart);
         if connected != true {
             set_led(&mut spi_drv, &mut uart, 0, 255, 0);
