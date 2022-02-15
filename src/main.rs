@@ -38,7 +38,6 @@ use embedded_hal::blocking::delay::DelayMs;
 
 use crate::hal::spi::Enabled;
 
-use heapless::Vec;
 use heapless::String;
 
 /// The linker will place this boot block at the start of our program image. We
@@ -50,7 +49,6 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 /// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
-
 const DUMMY_DATA: u8 = 0xFFu8;
 
 const START_CMD: u8 = 0xE0u8;
@@ -79,7 +77,6 @@ type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 type EnabledUart = hal::uart::UartPeripheral<rp2040_hal::uart::Enabled, pac::UART0,
     (rp2040_hal::gpio::Pin<Gpio0, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>, rp2040_hal::gpio::Pin<Gpio1, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>)>;
 
-//type Params = Vec::<u8, PARAMS_ARRAY_LEN>;
 type Params = [u8];
 
 struct Esp32Pins {
@@ -470,7 +467,6 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
 fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
     spi_drv.wait_for_esp_select();
 
-    // Send Command
     spi_drv.send_cmd(uart, SET_PASSPHRASE, 2).ok().unwrap();
 
     // FIXME: for the real crate, don't use unsafe
@@ -516,7 +512,6 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
 fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     spi_drv.wait_for_esp_select(); 
    
-    // Send Command
     spi_drv.send_cmd(uart, GET_CONN_STATUS, 0).ok().unwrap();
 
     spi_drv.esp_deselect();
@@ -536,6 +531,7 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
         }
         Err(e) => {
             writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e).ok().unwrap();
+            return false;
         }
     }
 
@@ -633,6 +629,10 @@ fn main() -> ! {
     spi_drv.init();
     spi_drv.reset(&mut delay);
 
+    // Turn the ESP32's onboard multi-color LED off
+    set_led(&mut spi_drv, &mut uart, 0, 0, 0);
+    delay.delay_ms(500);
+
     // Set wifi passphrase - ESP32 will attempt to connect after receving this cmd
     unsafe {
         wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
@@ -646,6 +646,7 @@ fn main() -> ! {
         // Check for connection in loop and set led on if connected succesfully
         let connected = get_connection_status(&mut spi_drv, &mut uart);
         if connected != true {
+            // Set ESP32 LED green when successfully connected to WiFi AP
             set_led(&mut spi_drv, &mut uart, 0, 255, 0);
         }
 
