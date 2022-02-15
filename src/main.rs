@@ -692,7 +692,7 @@ fn main() -> ! {
     loop {
         // Check for connection in loop and set led on if connected succesfully
         let connected = get_connection_status(&mut spi_drv, &mut uart);
-        if connected != true {
+        if connected == true {
             // Set ESP32 LED green when successfully connected to WiFi AP
             set_led(&mut spi_drv, &mut uart, 0, 255, 0);
         }
