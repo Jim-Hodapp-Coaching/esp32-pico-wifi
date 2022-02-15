@@ -405,22 +405,6 @@ impl SpiDrv {
         }
     }
 
-    fn send_param_string(&mut self, uart: &mut EnabledUart, param_string: String<STR_LEN>) -> () {
-        // let param_bytes: Vec<u8, STR_LEN> = param_string.into_bytes();
-        let param_bytes: &[u8] = param_string.as_bytes();
-        // param_bytes.iter().enumerate().for_each(|(i, byte)| {
-        //     let mut param: Params = Params::new();
-        //     param.push(*byte).unwrap();
-        //     // set last_param to true if this is the last byte in the sequence
-        //     let last_param: bool = i == (param_bytes.len() - 1);
-        //     write!(uart, "\tsend_param_string() is sending ascii character: {}\r\n", *byte as char);
-
-        //     if last_param { uart.write_full_blocking(b"\tsend_param_string() sending last_param\r\n"); };
-
-        //     self.send_param(uart, param, last_param);
-        // });
-    }
-
     fn pad_to_multiple_of_4(&mut self, uart: &mut EnabledUart, mut command_size: u8) {
         while command_size % 4 == 0 {
             self.read_byte(uart).ok().unwrap();
@@ -428,7 +412,6 @@ impl SpiDrv {
         }
     }
 }
-
 
 fn set_led(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, red: u8, green: u8, blue: u8) {
     write!(uart, "Calling analog_write(ESP_LED_R, {:?})\r\n", 255 - red).ok().unwrap();
