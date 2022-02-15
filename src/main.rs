@@ -633,73 +633,10 @@ fn main() -> ! {
     spi_drv.init();
     spi_drv.reset(&mut delay);
 
-    // // Turn the ESP32's onboard multi-color LED off
-    // set_led(&mut spi_drv, &mut uart, 0, 0, 0);
-    // delay.delay_ms(500);
-
-    // set_led(&mut spi_drv, &mut uart, 255, 0, 0);
-    // delay.delay_ms(1000);
-    // set_led(&mut spi_drv, &mut uart, 0, 255, 0);
-    // delay.delay_ms(1000);
-    // set_led(&mut spi_drv, &mut uart, 0, 0, 255);
-    // delay.delay_ms(1000);
-    // set_led(&mut spi_drv, &mut uart, 100, 100, 100);
-
-    // uart.write_full_blocking(b"-----------------\r\n");
-    // writeln!(uart, "START_CMD 0x{:X?}\r", START_CMD).ok().unwrap();
-    // writeln!(uart, "END_CMD 0x{:X?}\r", END_CMD).ok().unwrap();
-    // writeln!(uart, "REPLY_FLAG 0x{:X?}\r", REPLY_FLAG).ok().unwrap();
-    // uart.write_full_blocking(b"-----------------\r\n");
-
-    // // --- get_fw_version() ---
-    // uart.write_full_blocking(b"wait_for_esp_select()\r\n");
-    // spi_drv.wait_for_esp_select();
-    // uart.write_full_blocking(b"\tesp selected\r\n");
-
-    // uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
-    // let results = spi_drv.send_cmd(&mut uart, GET_FW_VERSION, 0);
-    // match results {
-    //     Ok(_) => { uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n"); }
-    //     Err(e) => { writeln!(uart, "\t** Failed to send GET_FW_VERSION command: {:?}\r\n", e).ok().unwrap(); }
-    // }
-
-    // spi_drv.esp_deselect();
-    // uart.write_full_blocking(b"esp_deselect()\r\n");
-
-    // uart.write_full_blocking(b"\r\nNow waiting for firmware version response...\r\n");
-    // uart.write_full_blocking(b"wait_for_esp_select()\r\n");
-    // spi_drv.wait_for_esp_select();
-    // uart.write_full_blocking(b"\tesp selected\r\n");
-
-    // // Get the ESP32 firmware version
-    // uart.write_full_blocking(b"wait_response_cmd()\r\n");
-    // let wait_response = spi_drv.wait_response_cmd(&mut uart, GET_FW_VERSION, 1);
-    // match wait_response {
-    //     Ok(params) => {
-    //         write!(uart, "\tESP32 firmware version: ").ok().unwrap();
-    //         for byte in params {
-    //             let c = byte as char;
-    //             write!(uart, "{:?}", c).ok().unwrap();
-    //         }
-    //         writeln!(uart, "\r\n").ok().unwrap();
-    //     }
-    //     Err(e) => {
-    //         writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
-    //             .ok()
-    //             .unwrap() 
-    //     }
-    // }
-    // uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
-
-    // spi_drv.esp_deselect();
-    // uart.write_full_blocking(b"esp_deselect()\r\n");
-
-    // // --- end get_fw_version() ---
     unsafe {
         wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
     }
     delay.delay_ms(1000);
-    
 
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
@@ -709,12 +646,6 @@ fn main() -> ! {
         if connected != true {
             set_led(&mut spi_drv, &mut uart, 0, 255, 0);
         }
-
-        // if i % 2 == 0 {
-        //     led_pin.set_high().unwrap();
-        // } else {
-        //     led_pin.set_low().unwrap();
-        // }
 
         write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
 
