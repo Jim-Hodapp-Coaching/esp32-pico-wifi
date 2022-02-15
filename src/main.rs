@@ -562,24 +562,24 @@ fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     uart.write_full_blocking(b"\tesp selected\r\n");
 
     // Get the ESP32 firmware version
-     uart.write_full_blocking(b"wait_response_cmd()\r\n");
-     let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
-     match wait_response {
-         Ok(params) => {
-             write!(uart, "\tESP32 firmware version: ").ok().unwrap();
-             for byte in params {
-                 let c = byte as char;
-                 write!(uart, "{:?}", c).ok().unwrap();
-             }
-             writeln!(uart, "\r\n").ok().unwrap();
-         }
-         Err(e) => {
-             writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
-                 .ok()
-                 .unwrap();
+    uart.write_full_blocking(b"wait_response_cmd()\r\n");
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tESP32 firmware version: ").ok().unwrap();
+                for byte in params {
+                    let c = byte as char;
+                    write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
             return false;
-         }
-     }
+        }
+    }
     uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
     spi_drv.esp_deselect();
     uart.write_full_blocking(b"esp_deselect()\r\n");
