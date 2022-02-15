@@ -696,7 +696,7 @@ fn main() -> ! {
 
     // // --- end get_fw_version() ---
     unsafe {
-        wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("creamandshug"), String::from("burgerbalogna"));
+        wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
     }
     delay.delay_ms(1000);
     
