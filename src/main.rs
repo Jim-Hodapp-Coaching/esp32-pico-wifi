@@ -484,21 +484,21 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     spi_drv.esp_deselect();
 }
 
-unsafe fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
+fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
     spi_drv.wait_for_esp_select();
 
     // Send Command
     spi_drv.send_cmd(uart, SET_PASSPHRASE, 2).ok().unwrap();
 
-    let ssid_bytes: &mut [u8] = ssid.as_bytes_mut();
-    let (bytes, _) = ssid_bytes.split_at_mut(ssid_bytes.len());
-    writeln!(uart, "ssid: {:?}\r", bytes).ok().unwrap();
-    spi_drv.send_param(uart, bytes, false).ok().unwrap();
+    // FIXME: for the real crate, don't use unsafe
+    let ssid_bytes: &mut [u8] = unsafe { ssid.as_bytes_mut() };
+    writeln!(uart, "ssid: {:?}\r", ssid_bytes).ok().unwrap();
+    spi_drv.send_param(uart, ssid_bytes, false).ok().unwrap();
 
-    let passphrase_bytes: &mut [u8] = passphrase.as_bytes_mut();
-    let (bytes, _) = passphrase_bytes.split_at_mut(passphrase_bytes.len());
-    writeln!(uart, "passphrase: {:?}\r", bytes).ok().unwrap();
-    spi_drv.send_param(uart, bytes, true).ok().unwrap();
+    // FIXME: for the real crate, don't use unsafe
+    let passphrase_bytes: &mut [u8] = unsafe { passphrase.as_bytes_mut() };
+    writeln!(uart, "passphrase: {:?}\r", passphrase_bytes).ok().unwrap();
+    spi_drv.send_param(uart, passphrase_bytes, true).ok().unwrap();
 
     let command_size: u8 = 6 + ssid.len() as u8 + passphrase.len() as u8;
     spi_drv.pad_to_multiple_of_4(uart, command_size);
