@@ -336,10 +336,7 @@ impl SpiDrv {
             Ok(_) => {
                 // TODO: this doesn't quite match the C++ code yet, seems it can send a
                 // variable length buf
-                // let mut byte_buf: [u8; param_len] =  params.into_array().unwrap();
-                // let byte_buf = &mut[params[0]];
                 let byte_buf = params;
-                //write!(uart, "\t\tsending bytes: 0x{:X?} -> ", params).ok().unwrap();
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(transfer_buf) => {
