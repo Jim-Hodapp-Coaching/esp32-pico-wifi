@@ -38,6 +38,8 @@ use embedded_hal::blocking::delay::DelayMs;
 
 use crate::hal::spi::Enabled;
 
+use heapless::String;
+
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
 #[link_section = ".boot2"]
@@ -47,7 +49,6 @@ pub static BOOT2: [u8; 256] = rp2040_boot2::BOOT_LOADER_W25Q080;
 /// External high-speed crystal on the Raspberry Pi Pico board is 12 MHz. Adjust
 /// if your board has a different frequency
 const XTAL_FREQ_HZ: u32 = 12_000_000u32;
-
 const DUMMY_DATA: u8 = 0xFFu8;
 
 const START_CMD: u8 = 0xE0u8;
@@ -59,12 +60,15 @@ const REPLY_FLAG: u8 = 1 << 7;
 const DATA_FLAG: u8 = 0x40u8;
 
 const PARAMS_ARRAY_LEN: usize = 8;
+const STR_LEN: usize = 24;
 
 const ESP_LED_R: u8 = 25;
 const ESP_LED_G: u8 = 26;
 const ESP_LED_B: u8 = 27;
 
+const SET_PASSPHRASE: u8 = 0x11u8;
 const GET_FW_VERSION: u8 = 0x37u8;
+const GET_CONN_STATUS: u8 = 0x20u8;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 
@@ -72,6 +76,8 @@ type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
 type EnabledUart = hal::uart::UartPeripheral<rp2040_hal::uart::Enabled, pac::UART0,
     (rp2040_hal::gpio::Pin<Gpio0, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>, rp2040_hal::gpio::Pin<Gpio1, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>)>;
+
+type Params = [u8];
 
 struct Esp32Pins {
     cs: Pin<Gpio7, hal::gpio::PushPullOutput>,
@@ -323,21 +329,22 @@ impl SpiDrv {
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-    fn send_param(&mut self, uart: &mut EnabledUart, param: u8, param_len: u8, last_param: bool) -> SpiResult<()> {
+    fn send_param(&mut self, uart: &mut EnabledUart, params: &mut Params, last_param: bool) -> SpiResult<()> {
+        let param_len: u8 = params.len() as u8;
         let res = self.send_param_len8(uart, param_len);
         match res {
             Ok(_) => {
                 // TODO: this doesn't quite match the C++ code yet, seems it can send a
                 // variable length buf
-                let byte_buf = &mut[param];
-                write!(uart, "\t\tsending byte: 0x{:X?} -> ", param).ok().unwrap();
+                let byte_buf = params;
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
-                    Ok(byte) => {
-                        write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                    Ok(transfer_buf) => {
+                        write!(uart, "read bytes: 0x{:X?}\r\n", transfer_buf).ok().unwrap();
                         if last_param {
-                            write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", param).ok().unwrap();
-                            let transfer_results = self.spi.transfer(byte_buf);
+                            let end_command = &mut[END_CMD];
+                            write!(uart, "sending byte: 0x{:X?} -> ", end_command).ok().unwrap();
+                            let transfer_results = self.spi.transfer(end_command);
                             match transfer_results {
                                 Ok(byte) => {
                                     write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
@@ -391,6 +398,13 @@ impl SpiDrv {
             Err(e) => { return Err(e); }
         }
     }
+
+    fn pad_to_multiple_of_4(&mut self, uart: &mut EnabledUart, mut command_size: u8) {
+        while command_size % 4 == 0 {
+            self.read_byte(uart).ok().unwrap();
+            command_size += 1;
+        }
+    }
 }
 
 fn set_led(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, red: u8, green: u8, blue: u8) {
@@ -411,9 +425,11 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     uart.write_full_blocking(b"\tsend_cmd(SET_ANALOG_WRITE)\r\n");
     spi_drv.send_cmd(uart, SET_ANALOG_WRITE, 2).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(pin)\r\n");
-    spi_drv.send_param(uart, pin, 1, false).ok().unwrap();
+    let pin_byte: &mut [u8] = &mut [pin];
+    spi_drv.send_param(uart, pin_byte, false).ok().unwrap();
     uart.write_full_blocking(b"\tsend_param(value)\r\n");
-    spi_drv.send_param(uart, value, 1, true).ok().unwrap(); // LAST_PARAM
+    let value_byte: &mut [u8] = &mut [value];
+    spi_drv.send_param(uart, value_byte, true).ok().unwrap(); // LAST_PARAM
 
     uart.write_full_blocking(b"\tread_byte()\r\n");
     spi_drv.read_byte(uart).ok().unwrap();
@@ -444,6 +460,130 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     uart.write_full_blocking(b"\tesp_deselect()\r\n");
     spi_drv.esp_deselect();
 }
+
+fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
+    spi_drv.wait_for_esp_select();
+
+    spi_drv.send_cmd(uart, SET_PASSPHRASE, 2).ok().unwrap();
+
+    // FIXME: for the real crate, don't use unsafe
+    let ssid_bytes: &mut [u8] = unsafe { ssid.as_bytes_mut() };
+    writeln!(uart, "ssid: {:?}\r", ssid_bytes).ok().unwrap();
+    spi_drv.send_param(uart, ssid_bytes, false).ok().unwrap();
+
+    // FIXME: for the real crate, don't use unsafe
+    let passphrase_bytes: &mut [u8] = unsafe { passphrase.as_bytes_mut() };
+    writeln!(uart, "passphrase: {:?}\r", passphrase_bytes).ok().unwrap();
+    spi_drv.send_param(uart, passphrase_bytes, true).ok().unwrap();
+
+    let command_size: u8 = 6 + ssid.len() as u8 + passphrase.len() as u8;
+    spi_drv.pad_to_multiple_of_4(uart, command_size);
+ 
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    // Wait for reply
+    let data: u8 = 0;
+    let wait_response = spi_drv.wait_response_cmd(uart, SET_PASSPHRASE, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\twifi_set_passphrase_response: ").ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\twifi_set_passphrase_response Err: {:?}\r", e).ok().unwrap();
+            spi_drv.esp_deselect();
+            return false;
+        }
+    }
+
+    spi_drv.esp_deselect();
+
+    true
+}
+
+fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
+    spi_drv.wait_for_esp_select(); 
+   
+    spi_drv.send_cmd(uart, GET_CONN_STATUS, 0).ok().unwrap();
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    // Wait for reply
+    let data: u8 = 0;
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tget_connection_status_response: ").ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e).ok().unwrap();
+            return false;
+        }
+    }
+
+    spi_drv.esp_deselect();
+
+    true
+}
+
+fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
+    uart.write_full_blocking(b"wait_for_esp_select()\r\n");
+    spi_drv.wait_for_esp_select();
+    uart.write_full_blocking(b"\tesp selected\r\n");
+
+    uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
+    let results = spi_drv.send_cmd(uart, GET_FW_VERSION, 0);
+    match results {
+        Ok(_) => { uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n"); }
+        Err(e) => { writeln!(uart, "\t** Failed to send GET_FW_VERSION command: {:?}\r\n", e).ok().unwrap();
+        return false;
+        }
+    }
+    spi_drv.esp_deselect();
+    uart.write_full_blocking(b"esp_deselect()\r\n");
+
+    uart.write_full_blocking(b"\r\nNow waiting for firmware version response...\r\n");
+    uart.write_full_blocking(b"wait_for_esp_select()\r\n");
+    spi_drv.wait_for_esp_select();
+    uart.write_full_blocking(b"\tesp selected\r\n");
+
+    // Get the ESP32 firmware version
+    uart.write_full_blocking(b"wait_response_cmd()\r\n");
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tESP32 firmware version: ").ok().unwrap();
+                for byte in params {
+                    let c = byte as char;
+                    write!(uart, "{:?}", c).ok().unwrap();
+            }
+            writeln!(uart, "\r\n").ok().unwrap();
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
+            return false;
+        }
+    }
+    uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
+    spi_drv.esp_deselect();
+    uart.write_full_blocking(b"esp_deselect()\r\n");
+
+    true
+}
+
 
 /// Entry point to our bare-metal application.
 ///
@@ -537,73 +677,21 @@ fn main() -> ! {
     set_led(&mut spi_drv, &mut uart, 0, 0, 0);
     delay.delay_ms(500);
 
-    set_led(&mut spi_drv, &mut uart, 255, 0, 0);
-    delay.delay_ms(1000);
-    set_led(&mut spi_drv, &mut uart, 0, 255, 0);
-    delay.delay_ms(1000);
-    set_led(&mut spi_drv, &mut uart, 0, 0, 255);
-    delay.delay_ms(1000);
-    set_led(&mut spi_drv, &mut uart, 100, 100, 100);
-
-    uart.write_full_blocking(b"-----------------\r\n");
-    writeln!(uart, "START_CMD 0x{:X?}\r", START_CMD).ok().unwrap();
-    writeln!(uart, "END_CMD 0x{:X?}\r", END_CMD).ok().unwrap();
-    writeln!(uart, "REPLY_FLAG 0x{:X?}\r", REPLY_FLAG).ok().unwrap();
-    uart.write_full_blocking(b"-----------------\r\n");
-
-    // --- get_fw_version() ---
-    uart.write_full_blocking(b"wait_for_esp_select()\r\n");
-    spi_drv.wait_for_esp_select();
-    uart.write_full_blocking(b"\tesp selected\r\n");
-
-    uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
-    let results = spi_drv.send_cmd(&mut uart, GET_FW_VERSION, 0);
-    match results {
-        Ok(_) => { uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n"); }
-        Err(e) => { writeln!(uart, "\t** Failed to send GET_FW_VERSION command: {:?}\r\n", e).ok().unwrap(); }
+    // Set wifi passphrase - ESP32 will attempt to connect after receving this cmd
+    unsafe {
+        wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
     }
-
-    spi_drv.esp_deselect();
-    uart.write_full_blocking(b"esp_deselect()\r\n");
-
-    uart.write_full_blocking(b"\r\nNow waiting for firmware version response...\r\n");
-    uart.write_full_blocking(b"wait_for_esp_select()\r\n");
-    spi_drv.wait_for_esp_select();
-    uart.write_full_blocking(b"\tesp selected\r\n");
-
-    // Get the ESP32 firmware version
-    uart.write_full_blocking(b"wait_response_cmd()\r\n");
-    let wait_response = spi_drv.wait_response_cmd(&mut uart, GET_FW_VERSION, 1);
-    match wait_response {
-        Ok(params) => {
-            write!(uart, "\tESP32 firmware version: ").ok().unwrap();
-            for byte in params {
-                let c = byte as char;
-                write!(uart, "{:?}", c).ok().unwrap();
-            }
-            writeln!(uart, "\r\n").ok().unwrap();
-        }
-        Err(e) => {
-            writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
-                .ok()
-                .unwrap() 
-        }
-    }
-    uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
-
-    spi_drv.esp_deselect();
-    uart.write_full_blocking(b"esp_deselect()\r\n");
-
-    // --- end get_fw_version() ---
+    delay.delay_ms(1000);
 
     let mut led_pin = pins.gpio25.into_push_pull_output();
 
     let mut i: u32 = 0;
     loop {
-        if i % 2 == 0 {
-            led_pin.set_high().unwrap();
-        } else {
-            led_pin.set_low().unwrap();
+        // Check for connection in loop and set led on if connected succesfully
+        let connected = get_connection_status(&mut spi_drv, &mut uart);
+        if connected == true {
+            // Set ESP32 LED green when successfully connected to WiFi AP
+            set_led(&mut spi_drv, &mut uart, 0, 255, 0);
         }
 
         write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
