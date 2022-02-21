@@ -2,7 +2,7 @@
 //!
 //! This application demonstrates how to use the SPI Driver to talk to a remote
 //! ESP32 wifi SPI device.
-//! 
+//!
 //! It's based off of the Pimoroni C++ code located here:
 //! https://github.com/pimoroni/pimoroni-pico/tree/main/examples/pico_wireless
 //!
@@ -10,7 +10,6 @@
 
 #![no_std]
 #![no_main]
-
 #![allow(unused_variables)]
 
 // The macro for our start-up function
@@ -24,17 +23,20 @@ use panic_halt as _;
 use rp2040_hal as hal;
 
 // Some traits we need
-use cortex_m::prelude::*;
 use core::fmt::Write;
-use embedded_time::rate::Extensions;
+use cortex_m::prelude::*;
 use embedded_time::fixed_point::FixedPoint;
+use embedded_time::rate::Extensions;
 use rp2040_hal::clocks::Clock;
-use rp2040_hal::{pac, gpio::{bank0::Gpio2, bank0::Gpio7, bank0::Gpio10, bank0::Gpio11, Pin}};
 use rp2040_hal::gpio::bank0::{Gpio0, Gpio1};
+use rp2040_hal::{
+    gpio::{bank0::Gpio10, bank0::Gpio11, bank0::Gpio2, bank0::Gpio7, Pin},
+    pac,
+};
 
+use embedded_hal::blocking::delay::DelayMs;
 use embedded_hal::digital::v2::InputPin;
 use embedded_hal::digital::v2::OutputPin;
-use embedded_hal::blocking::delay::DelayMs;
 
 use crate::hal::spi::Enabled;
 
@@ -75,8 +77,14 @@ const SET_ANALOG_WRITE: u8 = 0x52u8;
 
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
-type EnabledUart = hal::uart::UartPeripheral<rp2040_hal::uart::Enabled, pac::UART0,
-    (rp2040_hal::gpio::Pin<Gpio0, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>, rp2040_hal::gpio::Pin<Gpio1, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>)>;
+type EnabledUart = hal::uart::UartPeripheral<
+    rp2040_hal::uart::Enabled,
+    pac::UART0,
+    (
+        rp2040_hal::gpio::Pin<Gpio0, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>,
+        rp2040_hal::gpio::Pin<Gpio1, rp2040_hal::gpio::Function<rp2040_hal::gpio::Uart>>,
+    ),
+>;
 
 type Params = [u8];
 
@@ -88,14 +96,12 @@ struct Esp32Pins {
 }
 
 struct SpiDrv {
-    spi: hal::Spi::<Enabled, pac::SPI0, 8>,
+    spi: hal::Spi<Enabled, pac::SPI0, 8>,
     esp32_pins: Esp32Pins,
 }
 
 impl SpiDrv {
-    fn new(spi: hal::Spi<Enabled, pac::SPI0, 8>,
-           pins: Esp32Pins,
-        ) -> SpiDrv {
+    fn new(spi: hal::Spi<Enabled, pac::SPI0, 8>, pins: Esp32Pins) -> SpiDrv {
         SpiDrv {
             spi: spi,
             esp32_pins: pins,
@@ -145,24 +151,33 @@ impl SpiDrv {
     }
 
     fn wait_for_esp_select(&mut self) {
-        self.wait_for_esp_ready();   
+        self.wait_for_esp_ready();
         self.esp_select();
         self.wait_for_esp_ack();
     }
 
-    fn get_param(&mut self, uart: &mut EnabledUart) -> Result<u8, nb::Error<core::convert::Infallible>> {
+    fn get_param(
+        &mut self,
+        uart: &mut EnabledUart,
+    ) -> Result<u8, nb::Error<core::convert::Infallible>> {
         // Blocking read, don't return until we've read a byte successfully
         loop {
-            let word_out = &mut[DUMMY_DATA];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA).ok().unwrap();
+            let word_out = &mut [DUMMY_DATA];
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA)
+                .ok()
+                .unwrap();
             let read_result = self.spi.transfer(word_out);
             match read_result {
                 Ok(word) => {
                     let byte: u8 = word[0] as u8;
-                    write!(uart, "get_param() read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                    write!(uart, "get_param() read byte: 0x{:X?}\r\n", byte)
+                        .ok()
+                        .unwrap();
                     return Ok(byte);
                 }
-                Err(e) => { continue; }
+                Err(e) => {
+                    continue;
+                }
             }
         }
     }
@@ -170,8 +185,12 @@ impl SpiDrv {
     fn read_byte(&mut self, uart: &mut EnabledUart) -> SpiResult<u8> {
         let result = self.get_param(uart);
         match result {
-            Ok(byte_out) => { return Ok(byte_out); }
-            Err(e) => { return Err(e); }
+            Ok(byte_out) => {
+                return Ok(byte_out);
+            }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 
@@ -179,11 +198,20 @@ impl SpiDrv {
         let result = self.get_param(uart);
         match result {
             Ok(byte_out) => {
-                write!(uart, "\tread_and_check_byte(): 0x{:X?} == 0x{:X?}: {:?}\r\n",
-                    byte_out, check_byte, byte_out == check_byte).ok().unwrap();
+                write!(
+                    uart,
+                    "\tread_and_check_byte(): 0x{:X?} == 0x{:X?}: {:?}\r\n",
+                    byte_out,
+                    check_byte,
+                    byte_out == check_byte
+                )
+                .ok()
+                .unwrap();
                 return Ok(byte_out == check_byte);
             }
-            Err(e) => { return Err(e); }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 
@@ -203,7 +231,9 @@ impl SpiDrv {
                     }
                     timeout -= 1;
                 }
-                Err(e) => { return Err(e); }
+                Err(e) => {
+                    return Err(e);
+                }
             }
         }
     }
@@ -211,12 +241,21 @@ impl SpiDrv {
     fn check_start_cmd(&mut self, uart: &mut EnabledUart) -> SpiResult<bool> {
         let result = self.wait_for_byte(uart, START_CMD);
         match result {
-            Ok(b) => { return Ok(b); }
-            Err(e) => { return Err(e); }
+            Ok(b) => {
+                return Ok(b);
+            }
+            Err(e) => {
+                return Err(e);
+            }
         }
-    } 
+    }
 
-    fn wait_response_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
+    fn wait_response_cmd(
+        &mut self,
+        uart: &mut EnabledUart,
+        cmd: u8,
+        num_param: u8,
+    ) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
         // TODO: can we turn this into more of a functional syntax to clean
         // up the deep nesting? Investigate `map` for `Result` in Rust by Example, or use of Combinators
         let result = self.check_start_cmd(uart);
@@ -226,13 +265,20 @@ impl SpiDrv {
                 let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
                 match check_result {
                     Ok(_) => {
-                        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n");
+                        uart.write_full_blocking(
+                            b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
+                        );
                         let check_result = self.read_and_check_byte(uart, num_param);
                         match check_result {
                             Ok(_) => {
-                                uart.write_full_blocking(b"\tSuccess: read_and_check_byte(num_param)\r\n");
-                                let num_param_read: usize = self.get_param(uart).ok().unwrap() as usize;
-                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read).ok().unwrap();
+                                uart.write_full_blocking(
+                                    b"\tSuccess: read_and_check_byte(num_param)\r\n",
+                                );
+                                let num_param_read: usize =
+                                    self.get_param(uart).ok().unwrap() as usize;
+                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read)
+                                    .ok()
+                                    .unwrap();
                                 if num_param_read > PARAMS_ARRAY_LEN {
                                     // TODO: refactor the type of error this method returns away from nb::Error,
                                     // perhaps to something custom
@@ -242,71 +288,88 @@ impl SpiDrv {
                                 let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
                                 while i < num_param_read {
                                     params[i] = self.get_param(uart).ok().unwrap();
-                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i]).ok().unwrap();
+                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i])
+                                        .ok()
+                                        .unwrap();
                                     i += 1;
                                 }
 
                                 let check_result = self.read_and_check_byte(uart, END_CMD);
                                 match check_result {
                                     Ok(_) => {
-                                        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(END_CMD)\r\n");
+                                        uart.write_full_blocking(
+                                            b"\tSuccess: read_and_check_byte(END_CMD)\r\n",
+                                        );
                                         Ok(params)
                                     }
                                     Err(wrong_byte) => {
-                                        uart.write_full_blocking(b"\tFailed to read_and_check_byte(END_CMD)\r\n");
+                                        uart.write_full_blocking(
+                                            b"\tFailed to read_and_check_byte(END_CMD)\r\n",
+                                        );
                                         Err(wrong_byte)
                                     }
                                 }
                             }
                             Err(wrong_byte) => {
-                                uart.write_full_blocking(b"\tFailed to read_and_check_byte(num_param)\r\n");
+                                uart.write_full_blocking(
+                                    b"\tFailed to read_and_check_byte(num_param)\r\n",
+                                );
                                 Err(wrong_byte)
                             }
                         }
                     }
                     Err(wrong_byte) => {
-                        uart.write_full_blocking(b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n");
+                        uart.write_full_blocking(
+                            b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n",
+                        );
                         Err(wrong_byte)
                     }
                 }
             }
             Err(e) => {
                 uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
-                return Err(e); }
+                return Err(e);
+            }
         }
     }
 
     fn send_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<()> {
-        let buf: [u8; 3] = [START_CMD,
-                            cmd & !(REPLY_FLAG),
-                            num_param];
+        let buf: [u8; 3] = [START_CMD, cmd & !(REPLY_FLAG), num_param];
         for byte in buf {
-            let byte_buf = &mut[byte];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", byte).ok().unwrap();
+            let byte_buf = &mut [byte];
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", byte)
+                .ok()
+                .unwrap();
             let transfer_results = self.spi.transfer(byte_buf);
             match transfer_results {
-                Ok(byte) => { 
-                  write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
-                  continue; 
+                Ok(byte) => {
+                    write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                    continue;
                 }
                 Err(e) => {
-                  write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e).ok().unwrap();
-                  continue; 
+                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e)
+                        .ok()
+                        .unwrap();
+                    continue;
                 }
             }
         }
 
         if num_param == 0 {
-            let byte_buf = &mut[END_CMD];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", END_CMD).ok().unwrap();
+            let byte_buf = &mut [END_CMD];
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", END_CMD)
+                .ok()
+                .unwrap();
             let transfer_results = self.spi.transfer(byte_buf);
             match transfer_results {
                 Ok(byte) => {
                     write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
-                    return Ok(()
-                ); }
+                    return Ok(());
+                }
                 Err(e) => {
-                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e)
+                        .ok()
+                        .unwrap();
                     return Err(nb::Error::WouldBlock);
                 }
             }
@@ -315,8 +378,10 @@ impl SpiDrv {
     }
 
     fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
-        let byte_buf = &mut[param_len];
-        write!(uart, "\t\tsending byte: 0x{:X?} -> ", param_len).ok().unwrap();
+        let byte_buf = &mut [param_len];
+        write!(uart, "\t\tsending byte: 0x{:X?} -> ", param_len)
+            .ok()
+            .unwrap();
         let transfer_results = self.spi.transfer(byte_buf);
         match transfer_results {
             Ok(byte) => {
@@ -330,7 +395,12 @@ impl SpiDrv {
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-    fn send_param(&mut self, uart: &mut EnabledUart, params: &mut Params, last_param: bool) -> SpiResult<()> {
+    fn send_param(
+        &mut self,
+        uart: &mut EnabledUart,
+        params: &mut Params,
+        last_param: bool,
+    ) -> SpiResult<()> {
         let param_len: u8 = params.len() as u8;
         let res = self.send_param_len8(uart, param_len);
         match res {
@@ -341,41 +411,58 @@ impl SpiDrv {
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(transfer_buf) => {
-                        write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf).ok().unwrap();
+                        write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf)
+                            .ok()
+                            .unwrap();
                         if last_param {
-                            let end_command = &mut[END_CMD];
-                            write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", end_command).ok().unwrap();
+                            let end_command = &mut [END_CMD];
+                            write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", end_command)
+                                .ok()
+                                .unwrap();
                             let transfer_results = self.spi.transfer(end_command);
                             match transfer_results {
                                 Ok(byte) => {
-                                    write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                                    write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte)
+                                        .ok()
+                                        .unwrap();
                                     return Ok(());
                                 }
                                 Err(e) => {
-                                    write!(uart, "\t\t\tsend_param transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                                    write!(uart, "\t\t\tsend_param transfer error: 0x{:X?}\r\n", e)
+                                        .ok()
+                                        .unwrap();
                                     return Err(nb::Error::WouldBlock);
                                 }
-                            } 
+                            }
                         } else {
                             return Ok(());
                         }
                     }
                     Err(e) => {
-                        write!(uart, "send_param transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                        write!(uart, "send_param transfer error: 0x{:X?}\r\n", e)
+                            .ok()
+                            .unwrap();
                         return Err(nb::Error::WouldBlock);
                     }
                 }
             }
-            Err(e) => { return Err(e); }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-    fn send_param_word(&mut self, uart: &mut EnabledUart, param: u16, last_param: bool) -> SpiResult<()> {
+    fn send_param_word(
+        &mut self,
+        uart: &mut EnabledUart,
+        param: u16,
+        last_param: bool,
+    ) -> SpiResult<()> {
         let res = self.send_param_len8(uart, 2);
         match res {
             Ok(_) => {
-                let buf: [u8; 2] = [ ((param & 0xff00) >> 8) as u8, (param & 0xff) as u8 ];
+                let buf: [u8; 2] = [((param & 0xff00) >> 8) as u8, (param & 0xff) as u8];
                 // FIXME: send both buf bytes, not just the first one
                 // FIXME: switch to using transfer(), not send()
                 let transfer_results = self.spi.send(buf[0]);
@@ -386,17 +473,25 @@ impl SpiDrv {
                             // FIXME: switch to using transfer(), not send()
                             let transfer_results = self.spi.send(buf[0]);
                             match transfer_results {
-                                Ok(_) => { return Ok(()); }
-                                Err(e) => { return Err(e); }
-                            } 
+                                Ok(_) => {
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
+                            }
                         } else {
                             return Ok(());
                         }
                     }
-                    Err(e) => { return Err(e); }
+                    Err(e) => {
+                        return Err(e);
+                    }
                 }
             }
-            Err(e) => { return Err(e); }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 
@@ -409,13 +504,27 @@ impl SpiDrv {
 }
 
 fn set_led(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, red: u8, green: u8, blue: u8) {
-    write!(uart, "Calling analog_write(ESP_LED_R, {:?})\r\n", 255 - red).ok().unwrap();
+    write!(uart, "Calling analog_write(ESP_LED_R, {:?})\r\n", 255 - red)
+        .ok()
+        .unwrap();
     analog_write(spi_drv, uart, ESP_LED_R, 255 - red);
 
-    write!(uart, "Calling analog_write(ESP_LED_G, {:?})\r\n", 255 - green).ok().unwrap();
+    write!(
+        uart,
+        "Calling analog_write(ESP_LED_G, {:?})\r\n",
+        255 - green
+    )
+    .ok()
+    .unwrap();
     analog_write(spi_drv, uart, ESP_LED_G, 255 - green);
 
-    write!(uart, "Calling analog_write(ESP_LED_B, {:?})\r\n", 255 - blue).ok().unwrap();
+    write!(
+        uart,
+        "Calling analog_write(ESP_LED_B, {:?})\r\n",
+        255 - blue
+    )
+    .ok()
+    .unwrap();
     analog_write(spi_drv, uart, ESP_LED_B, 255 - blue);
 }
 
@@ -453,7 +562,9 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
             writeln!(uart, "\r\n").ok().unwrap();
         }
         Err(e) => {
-            writeln!(uart, "\twait_response_cmd(SET_ANALOG_WRITE) Err: {:?}\r", e).ok().unwrap();
+            writeln!(uart, "\twait_response_cmd(SET_ANALOG_WRITE) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
         }
     }
 
@@ -461,7 +572,12 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     spi_drv.esp_deselect();
 }
 
-fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
+fn wifi_set_passphrase(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    mut ssid: String<STR_LEN>,
+    mut passphrase: String<STR_LEN>,
+) -> bool {
     uart.write_full_blocking(b"wifi_set_passphrase()\r\n");
     spi_drv.wait_for_esp_select();
 
@@ -474,12 +590,17 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
 
     // FIXME: for the real crate, don't use unsafe
     let passphrase_bytes: &mut [u8] = unsafe { passphrase.as_bytes_mut() };
-    writeln!(uart, "\tpassphrase: {:?}\r", passphrase_bytes).ok().unwrap();
-    spi_drv.send_param(uart, passphrase_bytes, true).ok().unwrap();
+    writeln!(uart, "\tpassphrase: {:?}\r", passphrase_bytes)
+        .ok()
+        .unwrap();
+    spi_drv
+        .send_param(uart, passphrase_bytes, true)
+        .ok()
+        .unwrap();
 
     let command_size: u8 = 6 + ssid.len() as u8 + passphrase.len() as u8;
     spi_drv.pad_to_multiple_of_4(uart, command_size);
- 
+
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
 
@@ -487,7 +608,9 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
     let wait_response = spi_drv.wait_response_cmd(uart, SET_PASSPHRASE, 1);
     match wait_response {
         Ok(params) => {
-            write!(uart, "\twifi_set_passphrase_response: ").ok().unwrap();
+            write!(uart, "\twifi_set_passphrase_response: ")
+                .ok()
+                .unwrap();
             for byte in params {
                 let c = byte as char;
                 write!(uart, "{:?}", c).ok().unwrap();
@@ -495,7 +618,9 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
             writeln!(uart, "\r\n").ok().unwrap();
         }
         Err(e) => {
-            writeln!(uart, "\twifi_set_passphrase_response Err: {:?}\r", e).ok().unwrap();
+            writeln!(uart, "\twifi_set_passphrase_response Err: {:?}\r", e)
+                .ok()
+                .unwrap();
             spi_drv.esp_deselect();
             return false;
         }
@@ -507,8 +632,8 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
 }
 
 fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<bool> {
-    spi_drv.wait_for_esp_select(); 
-   
+    spi_drv.wait_for_esp_select();
+
     spi_drv.send_cmd(uart, GET_CONN_STATUS, 0).ok().unwrap();
 
     spi_drv.esp_deselect();
@@ -519,12 +644,20 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiRes
     let wait_response = spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1);
     match wait_response {
         Ok(params) => {
-            write!(uart, "\tget_connection_status_response: {:?}\r\n", params[0]).ok().unwrap();
+            write!(
+                uart,
+                "\tget_connection_status_response: {:?}\r\n",
+                params[0]
+            )
+            .ok()
+            .unwrap();
             // TODO: Replace connected status with enumerated type (i.e. 0x3 in this case)
             connected = params[0] == 0x3;
         }
         Err(e) => {
-            writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e).ok().unwrap();
+            writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e)
+                .ok()
+                .unwrap();
             spi_drv.esp_deselect();
             return Err(e);
         }
@@ -542,9 +675,18 @@ fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     uart.write_full_blocking(b"send_cmd(GET_FW_VERSION)\r\n");
     let results = spi_drv.send_cmd(uart, GET_FW_VERSION, 0);
     match results {
-        Ok(_) => { uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n"); }
-        Err(e) => { writeln!(uart, "\t** Failed to send GET_FW_VERSION command: {:?}\r\n", e).ok().unwrap();
-        return false;
+        Ok(_) => {
+            uart.write_full_blocking(b"\tsent GET_FW_VERSION command\r\n");
+        }
+        Err(e) => {
+            writeln!(
+                uart,
+                "\t** Failed to send GET_FW_VERSION command: {:?}\r\n",
+                e
+            )
+            .ok()
+            .unwrap();
+            return false;
         }
     }
     spi_drv.esp_deselect();
@@ -561,9 +703,9 @@ fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     match wait_response {
         Ok(params) => {
             write!(uart, "\tESP32 firmware version: ").ok().unwrap();
-                for byte in params {
-                    let c = byte as char;
-                    write!(uart, "{:?}", c).ok().unwrap();
+            for byte in params {
+                let c = byte as char;
+                write!(uart, "{:?}", c).ok().unwrap();
             }
             writeln!(uart, "\r\n").ok().unwrap();
         }
@@ -583,11 +725,17 @@ fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
 
 fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.wait_for_esp_select();
-    
+
     let results = spi_drv.send_cmd(uart, GET_SOCKET, 0);
     match results {
-        Ok(_) => { uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n"); }
-        Err(e) => { writeln!(uart, "\t** Failed to send GET_SOCKET command: {:?}\r\n", e).ok().unwrap(); }
+        Ok(_) => {
+            uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n");
+        }
+        Err(e) => {
+            writeln!(uart, "\t** Failed to send GET_SOCKET command: {:?}\r\n", e)
+                .ok()
+                .unwrap();
+        }
     }
 
     spi_drv.esp_deselect();
@@ -597,7 +745,9 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
     match wait_response {
         Ok(params) => {
-            write!(uart, "\tget_socket: {:?}\r\n", params[0]).ok().unwrap();
+            write!(uart, "\tget_socket: {:?}\r\n", params[0])
+                .ok()
+                .unwrap();
             socket = params[0];
             spi_drv.esp_deselect();
             Ok(socket)
@@ -660,11 +810,11 @@ fn main() -> ! {
     );
 
     let mut uart = hal::uart::UartPeripheral::<_, _, _>::new(pac.UART0, uart_pins, &mut pac.RESETS)
-    .enable(
-        hal::uart::common_configs::_115200_8_N_1,
-        clocks.peripheral_clock.freq(),
-    )
-    .unwrap();
+        .enable(
+            hal::uart::common_configs::_115200_8_N_1,
+            clocks.peripheral_clock.freq(),
+        )
+        .unwrap();
 
     let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
 
@@ -705,7 +855,12 @@ fn main() -> ! {
     delay.delay_ms(500);
 
     // Set wifi passphrase - ESP32 will attempt to connect after receving this cmd
-    wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
+    wifi_set_passphrase(
+        &mut spi_drv,
+        &mut uart,
+        String::from("ssid"),
+        String::from("password"),
+    );
     delay.delay_ms(1000);
 
     let led_pin = pins.gpio25.into_push_pull_output();
@@ -723,8 +878,7 @@ fn main() -> ! {
                     uart.write_full_blocking(b"** Connected to WiFi\r\n");
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 0, 255, 0);
-                }
-                else {
+                } else {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 255, 0, 0);
