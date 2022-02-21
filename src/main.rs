@@ -341,18 +341,18 @@ impl SpiDrv {
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(transfer_buf) => {
-                        write!(uart, "read bytes: 0x{:X?}\r\n", transfer_buf).ok().unwrap();
+                        write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf).ok().unwrap();
                         if last_param {
                             let end_command = &mut[END_CMD];
-                            write!(uart, "sending byte: 0x{:X?} -> ", end_command).ok().unwrap();
+                            write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", end_command).ok().unwrap();
                             let transfer_results = self.spi.transfer(end_command);
                             match transfer_results {
                                 Ok(byte) => {
-                                    write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                                    write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).ok().unwrap();
                                     return Ok(());
                                 }
                                 Err(e) => {
-                                    write!(uart, "send_param transfer error: 0x{:X?}\r\n", e).ok().unwrap();
+                                    write!(uart, "\t\t\tsend_param transfer error: 0x{:X?}\r\n", e).ok().unwrap();
                                     return Err(nb::Error::WouldBlock);
                                 }
                             } 
@@ -441,7 +441,6 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
     spi_drv.wait_for_esp_select();
 
     // Wait for a reply from ESP32
-    let data: u8 = 0;
     uart.write_full_blocking(b"\twait_response_cmd()\r\n");
     let wait_response = spi_drv.wait_response_cmd(uart, SET_ANALOG_WRITE, 1);
     match wait_response {
@@ -463,18 +462,19 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
 }
 
 fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: String<STR_LEN>, mut passphrase: String<STR_LEN>) -> bool {
+    uart.write_full_blocking(b"wifi_set_passphrase()\r\n");
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, SET_PASSPHRASE, 2).ok().unwrap();
 
     // FIXME: for the real crate, don't use unsafe
     let ssid_bytes: &mut [u8] = unsafe { ssid.as_bytes_mut() };
-    writeln!(uart, "ssid: {:?}\r", ssid_bytes).ok().unwrap();
+    writeln!(uart, "\tssid: {:?}\r", ssid_bytes).ok().unwrap();
     spi_drv.send_param(uart, ssid_bytes, false).ok().unwrap();
 
     // FIXME: for the real crate, don't use unsafe
     let passphrase_bytes: &mut [u8] = unsafe { passphrase.as_bytes_mut() };
-    writeln!(uart, "passphrase: {:?}\r", passphrase_bytes).ok().unwrap();
+    writeln!(uart, "\tpassphrase: {:?}\r", passphrase_bytes).ok().unwrap();
     spi_drv.send_param(uart, passphrase_bytes, true).ok().unwrap();
 
     let command_size: u8 = 6 + ssid.len() as u8 + passphrase.len() as u8;
@@ -484,7 +484,6 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
     spi_drv.wait_for_esp_select();
 
     // Wait for reply
-    let data: u8 = 0;
     let wait_response = spi_drv.wait_response_cmd(uart, SET_PASSPHRASE, 1);
     match wait_response {
         Ok(params) => {
@@ -507,7 +506,7 @@ fn wifi_set_passphrase(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, mut ssid: S
     true
 }
 
-fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
+fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<bool> {
     spi_drv.wait_for_esp_select(); 
    
     spi_drv.send_cmd(uart, GET_CONN_STATUS, 0).ok().unwrap();
@@ -516,26 +515,23 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     spi_drv.wait_for_esp_select();
 
     // Wait for reply
-    let data: u8 = 0;
+    let mut connected = false;
     let wait_response = spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1);
     match wait_response {
         Ok(params) => {
-            write!(uart, "\tget_connection_status_response: ").ok().unwrap();
-            for byte in params {
-                let c = byte as char;
-                write!(uart, "{:?}", c).ok().unwrap();
-            }
-            writeln!(uart, "\r\n").ok().unwrap();
+            write!(uart, "\tget_connection_status_response: {:?}\r\n", params[0]).ok().unwrap();
+            // TODO: Replace connected status with enumerated type (i.e. 0x3 in this case)
+            connected = params[0] == 0x3;
         }
         Err(e) => {
             writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e).ok().unwrap();
-            return false;
+            spi_drv.esp_deselect();
+            return Err(e);
         }
     }
-
     spi_drv.esp_deselect();
 
-    true
+    Ok(connected)
 }
 
 fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
@@ -709,9 +705,7 @@ fn main() -> ! {
     delay.delay_ms(500);
 
     // Set wifi passphrase - ESP32 will attempt to connect after receving this cmd
-    unsafe {
-        wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
-    }
+    wifi_set_passphrase(&mut spi_drv, &mut uart, String::from("ssid"), String::from("password"));
     delay.delay_ms(1000);
 
     let led_pin = pins.gpio25.into_push_pull_output();
@@ -722,10 +716,23 @@ fn main() -> ! {
     let mut i: u32 = 0;
     loop {
         // Check for connection in loop and set led on if connected succesfully
-        let connected = get_connection_status(&mut spi_drv, &mut uart);
-        if connected == true {
-            // Set ESP32 LED green when successfully connected to WiFi AP
-            set_led(&mut spi_drv, &mut uart, 0, 255, 0);
+        let result = get_connection_status(&mut spi_drv, &mut uart);
+        match result {
+            Ok(connected) => {
+                if connected {
+                    uart.write_full_blocking(b"** Connected to WiFi\r\n");
+                    // Set ESP32 LED green when successfully connected to WiFi AP
+                    set_led(&mut spi_drv, &mut uart, 0, 255, 0);
+                }
+                else {
+                    uart.write_full_blocking(b"** Not connected to WiFi\r\n");
+                    // Set ESP32 LED green when successfully connected to WiFi AP
+                    set_led(&mut spi_drv, &mut uart, 255, 0, 0);
+                }
+            }
+            Err(e) => {
+                uart.write_full_blocking(b"** Failed to get WiFi connection status\r\n");
+            }
         }
 
         write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
