@@ -69,6 +69,7 @@ const ESP_LED_B: u8 = 27;
 const SET_PASSPHRASE: u8 = 0x11u8;
 const GET_FW_VERSION: u8 = 0x37u8;
 const GET_CONN_STATUS: u8 = 0x20u8;
+const GET_SOCKET: u8 = 0x3fu8;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 
@@ -584,6 +585,36 @@ fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     true
 }
 
+fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
+    spi_drv.wait_for_esp_select();
+    
+    let results = spi_drv.send_cmd(uart, GET_SOCKET, 0);
+    match results {
+        Ok(_) => { uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n"); }
+        Err(e) => { writeln!(uart, "\t** Failed to send GET_SOCKET command: {:?}\r\n", e).ok().unwrap(); }
+    }
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    let mut socket = 0;
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tget_socket: {:?}\r\n", params[0]).ok().unwrap();
+            socket = params[0];
+            spi_drv.esp_deselect();
+            Ok(socket)
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(GET_SOCKET) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            Err(e)
+        }
+    }
+}
 
 /// Entry point to our bare-metal application.
 ///
@@ -683,7 +714,10 @@ fn main() -> ! {
     }
     delay.delay_ms(1000);
 
-    let mut led_pin = pins.gpio25.into_push_pull_output();
+    let led_pin = pins.gpio25.into_push_pull_output();
+
+    let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
+    writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
 
     let mut i: u32 = 0;
     loop {
