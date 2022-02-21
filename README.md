@@ -6,9 +6,6 @@ For more details see the following article on getting started for getting your e
 on Mac/Linux:
 https://reltech.substack.com/p/getting-started-with-rust-on-a-raspberry
 
-On a Mac, to run minicom: `minicom -D /dev/tty.usbmodem14201 -b 115200`. Note that you'll most likely
-need to find the current /dev link assigned to the Pico UART for your particular machine.
-
 At the time of writing, this code is heavily influenced by the Pimoroni C++ Wifi driver:
 https://github.com/pimoroni/pimoroni-pico/blob/main/drivers/esp32spi/
 
@@ -38,7 +35,19 @@ For a release build
 ```
 cargo run --release
 ```
-  
+
+To see debug output on the serial console on macOS:
+```
+minicom -D /dev/tty.usbmodem14201 -b 115200
+```
+or on Linux:
+```
+minicom -D /dev/ttyUSB0 -b 115200
+```
+
+Note that you'll most likely
+need to find the current /dev link assigned to the Pico UART for your particular machine.
+
 ## License
 
 This project is licensed under either of
