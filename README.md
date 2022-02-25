@@ -50,11 +50,6 @@ need to find the current /dev link assigned to the Pico UART for your particular
 
 ## License
 
-This project is licensed under either of
+This project is licensed under the [BSD + Patent license](https://opensource.org/licenses/BSDplusPatent).
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
-  http://www.apache.org/licenses/LICENSE-2.0)
-
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
+Any submissions to this project (e.g. as Pull Requests) must be made available under these terms.
