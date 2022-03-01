@@ -40,7 +40,12 @@ use embedded_hal::digital::v2::OutputPin;
 
 use crate::hal::spi::Enabled;
 
-use heapless::String;
+//use heapless::String;
+
+use no_std_net::{Ipv4Addr, SocketAddrV4};
+
+//mod secrets;
+include!("secrets.rs");
 
 /// The linker will place this boot block at the start of our program image. We
 /// need this to help the ROM bootloader get our code up and running.
@@ -62,7 +67,7 @@ const REPLY_FLAG: u8 = 1 << 7;
 const DATA_FLAG: u8 = 0x40u8;
 
 const PARAMS_ARRAY_LEN: usize = 8;
-const STR_LEN: usize = 24;
+const STR_LEN: usize = 40;
 
 const ESP_LED_R: u8 = 25;
 const ESP_LED_G: u8 = 26;
@@ -71,9 +76,23 @@ const ESP_LED_B: u8 = 27;
 const SET_PASSPHRASE: u8 = 0x11u8;
 const GET_FW_VERSION: u8 = 0x37u8;
 const GET_CONN_STATUS: u8 = 0x20u8;
+const START_CLIENT_TCP: u8 = 0x2du8;
+const GET_CLIENT_STATE_TCP: u8 = 0x2fu8;
 const GET_SOCKET: u8 = 0x3fu8;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
+
+// Defines the mode types that the ESP32 firmware can be put into when starting
+// a new client or server instance
+#[repr(u8)]
+#[derive(Debug)]
+enum SvProtocolMode {
+    TCP = 0,
+    UDP = 1,
+    TLS = 2,
+    UDPMulticast = 3,
+    TLSBearSSL = 4
+}
 
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
@@ -379,7 +398,7 @@ impl SpiDrv {
 
     fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
         let byte_buf = &mut [param_len];
-        write!(uart, "\t\tsending byte: 0x{:X?} -> ", param_len)
+        write!(uart, "\t\tsending byte (len8): 0x{:X?} -> ", param_len)
             .ok()
             .unwrap();
         let transfer_results = self.spi.transfer(byte_buf);
@@ -402,12 +421,12 @@ impl SpiDrv {
         last_param: bool,
     ) -> SpiResult<()> {
         let param_len: u8 = params.len() as u8;
+        write!(uart, "\t\tparams.len(): {:X?}\r\n", param_len).ok().unwrap();
         let res = self.send_param_len8(uart, param_len);
         match res {
             Ok(_) => {
-                // TODO: this doesn't quite match the C++ code yet, seems it can send a
-                // variable length buf
                 let byte_buf = params;
+                write!(uart, "\t\tsending byte[0]: {:X?}\r\n", byte_buf[0]).ok().unwrap();
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(transfer_buf) => {
@@ -462,30 +481,15 @@ impl SpiDrv {
         let res = self.send_param_len8(uart, 2);
         match res {
             Ok(_) => {
-                let buf: [u8; 2] = [((param & 0xff00) >> 8) as u8, (param & 0xff) as u8];
-                // FIXME: send both buf bytes, not just the first one
-                // FIXME: switch to using transfer(), not send()
-                let transfer_results = self.spi.send(buf[0]);
+                let byte_buf: &mut [u8; 2] = &mut [((param & 0xff00) >> 8) as u8, (param & 0xff) as u8];
+                let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
-                    Ok(_) => {
-                        if last_param {
-                            let buf: [u8; 1] = [END_CMD];
-                            // FIXME: switch to using transfer(), not send()
-                            let transfer_results = self.spi.send(buf[0]);
-                            match transfer_results {
-                                Ok(_) => {
-                                    return Ok(());
-                                }
-                                Err(e) => {
-                                    return Err(e);
-                                }
-                            }
-                        } else {
-                            return Ok(());
-                        }
+                    Ok(byte) => {
+                        write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                        return Ok(());
                     }
                     Err(e) => {
-                        return Err(e);
+                        return Err(nb::Error::WouldBlock);
                     }
                 }
             }
@@ -631,7 +635,7 @@ fn wifi_set_passphrase(
     true
 }
 
-fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<bool> {
+fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> Result<bool, String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, GET_CONN_STATUS, 0).ok().unwrap();
@@ -640,7 +644,6 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiRes
     spi_drv.wait_for_esp_select();
 
     // Wait for reply
-    let mut connected = false;
     let wait_response = spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1);
     match wait_response {
         Ok(params) => {
@@ -651,20 +654,18 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiRes
             )
             .ok()
             .unwrap();
+            spi_drv.esp_deselect();
             // TODO: Replace connected status with enumerated type (i.e. 0x3 in this case)
-            connected = params[0] == 0x3;
+            return Ok(params[0] == 0x3);
         }
         Err(e) => {
             writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Err(e);
+            return Err(String::from("Failed to get connection status response."));
         }
     }
-    spi_drv.esp_deselect();
-
-    Ok(connected)
 }
 
 fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
@@ -741,7 +742,7 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
 
-    let mut socket = 0;
+    let socket;
     let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
     match wait_response {
         Ok(params) => {
@@ -759,6 +760,159 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
             spi_drv.esp_deselect();
             Err(e)
         }
+    }
+}
+
+fn get_client_state(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    client_socket: u8
+) -> Result<u8, String<STR_LEN>> {
+    spi_drv.wait_for_esp_select();
+
+    spi_drv.send_cmd(uart, GET_CLIENT_STATE_TCP, 1).ok().unwrap();
+    let client_socket_param: &mut [u8] = &mut [client_socket];
+    spi_drv.send_param(uart, client_socket_param, true).ok().unwrap();
+
+    // Pad to multiple of 4
+    spi_drv.read_byte(uart).ok().unwrap();
+    spi_drv.read_byte(uart).ok().unwrap();
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    // Wait for reply
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_CLIENT_STATE_TCP, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(
+                uart,
+                "\tget_client_state_tcp: {:?}\r\n",
+                params[0]
+            )
+            .ok()
+            .unwrap();
+            spi_drv.esp_deselect();
+            // TODO: Replace client state with enumerated type
+            return Ok(params[0]);
+        }
+        Err(e) => {
+            writeln!(uart, "\tget_client_state response Err: {:?}\r", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            return Err(String::from("Failed to get client state response."));
+        }
+    }
+}
+
+fn start_client(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    client_socket: u8,
+    host_address_port: SocketAddrV4,
+    protocol_mode: SvProtocolMode
+) -> Result<bool, String<STR_LEN>> {
+    spi_drv.wait_for_esp_select();
+
+    let results = spi_drv.send_cmd(uart, START_CLIENT_TCP, 4);
+    match results {
+        Ok(_) => {
+            uart.write_full_blocking(b"\tSent START_CLIENT_TCP command\r\n");
+        }
+        Err(e) => {
+            writeln!(uart, "\t** Failed to send START_CLIENT_TCP command: {:?}\r\n", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            return Err(String::from("Failed to send_cmd(START_CLIENT_TCP"));
+        }
+    }
+
+    write!(uart, "\tSending host IP: {:?}\r\n", host_address_port.ip()).ok().unwrap();
+    let octets_param: &mut [u8] = &mut host_address_port.ip().octets();
+    spi_drv.send_param(uart, octets_param, false).ok().unwrap();
+
+    write!(uart, "\tSending host port: {:?}\r\n", host_address_port.port()).ok().unwrap();
+    spi_drv.send_param_word(uart, host_address_port.port(), false).ok().unwrap();
+
+    write!(uart, "\tSending client socket: {:?}\r\n", client_socket).ok().unwrap();
+    let client_socket_param: &mut [u8] = &mut [client_socket];
+    spi_drv.send_param(uart, client_socket_param, false).ok().unwrap();
+
+    write!(uart, "\tSending protocol mode: {:?}\r\n", protocol_mode).ok().unwrap();
+    let protocol_mode_param: &mut [u8] = &mut [protocol_mode as u8];
+    spi_drv.send_param(uart, protocol_mode_param, true).ok().unwrap();
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    let wait_response = spi_drv.wait_response_cmd(uart, START_CLIENT_TCP, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tstart_client: {:?}\r\n", params[0])
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            return Ok(params[0] == 1);
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(START_CLIENT_TCP) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            return Err(String::from("Failed to wait_response_cmd(START_CLIENT_TCP"));
+        }
+    }
+}
+
+fn connect(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    client_socket: u8,
+    host_address_port: SocketAddrV4,
+) -> Result<bool, String<STR_LEN>> {
+    let result = start_client(spi_drv, uart, client_socket, host_address_port, SvProtocolMode::TCP);
+    match result {
+        Ok(b) => { 
+            write!(uart, "Result start_client(): {:?}\r\n", b)
+                .ok()
+                .unwrap();
+            if b == false { return Ok(false); }
+        }
+        Err(e) => { return Err(e); }
+    }
+
+    let mut timeout: u16 = 1000;
+    while timeout > 0 {
+        let result = get_client_state(spi_drv, uart, client_socket);
+        match result {
+            Ok(state) => {
+                if state == 4 { return Ok(true); }
+            }
+            Err(e) => { return Err(e); }
+        }
+        timeout -= 1;
+    }
+
+    return Ok(false);
+}
+
+fn http_request(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    client_socket: u8,
+    host_address_port: SocketAddrV4,
+    request_path: String<STR_LEN>
+) -> Result<bool, String<STR_LEN>> {
+    let result = connect(spi_drv, uart, client_socket, host_address_port);
+    match result {
+        Ok(connected) => {
+            if connected { uart.write_full_blocking(b"Successfully connected to remote TCP server.\r\n"); }
+            return Ok(connected);
+        }
+        Err(e) => { return Err(e); }
+
     }
 }
 
@@ -858,27 +1012,38 @@ fn main() -> ! {
     wifi_set_passphrase(
         &mut spi_drv,
         &mut uart,
-        String::from("ssid"),
-        String::from("password"),
+        String::from(SSID),
+        String::from(PASSPHRASE),
     );
     delay.delay_ms(1000);
 
     let led_pin = pins.gpio25.into_push_pull_output();
 
-    let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
-    writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
-
     let mut i: u32 = 0;
+    let mut did_once = false; // Only send HTTP POST one time
     loop {
         // Check for connection in loop and set led on if connected succesfully
         let result = get_connection_status(&mut spi_drv, &mut uart);
         match result {
             Ok(connected) => {
-                if connected {
+                if connected && !did_once {
                     uart.write_full_blocking(b"** Connected to WiFi\r\n");
+
+                    let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
+                    writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
+
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 0, 255, 0);
-                } else {
+
+                    //let host_address_port = SocketAddrV4::new(Ipv4Addr::new(127, 0, 0, 1), 4000);
+                    let host_address_port = SocketAddrV4::new(Ipv4Addr::new(3, 213, 58, 187), 80);
+                    //let request_path = String::from("/api/readings/add");
+                    let request_path = String::from("/channels/1417/field/2/last.txt");
+                    writeln!(uart, "Making HTTP POST request to: http://{:?}{:?}\r\n", host_address_port, request_path).ok().unwrap();
+                    http_request(&mut spi_drv, &mut uart, socket, host_address_port, request_path).ok().unwrap();
+
+                    did_once = true;
+                } else if !connected {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 255, 0, 0);
@@ -891,7 +1056,7 @@ fn main() -> ! {
 
         write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
 
-        delay.delay_ms(1000);
+        delay.delay_ms(2000);
         i += 1;
     }
 }
