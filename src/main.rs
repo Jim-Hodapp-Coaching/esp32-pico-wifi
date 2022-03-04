@@ -64,7 +64,6 @@ const REPLY_FLAG: u8 = 1 << 7;
 const DATA_FLAG: u8 = 0x40u8;
 
 const PARAMS_ARRAY_LEN: usize = 8;
-const DATA_ARRAY_LEN: usize = 255;
 const STR_LEN: usize = 512;
 
 const ESP_LED_R: u8 = 25;
@@ -1131,8 +1130,8 @@ fn http_request(
 
             if do_get_request {
                 let mut http_get_request: String<STR_LEN> = String::from("GET ");
-                http_get_request.push_str(&request_path).is_ok();
-                http_get_request.push_str(" HTTP/1.1\r\nHost: ").is_ok();
+                http_get_request.push_str(&request_path).ok().unwrap();
+                http_get_request.push_str(" HTTP/1.1\r\nHost: ").ok().unwrap();
                 let mut host_address_str: String<STR_LEN> = String::new();
                 write!(host_address_str, "{}.{}.{}.{}:{:?}\r\n",
                     host_address_port.ip().octets()[0],
@@ -1140,10 +1139,10 @@ fn http_request(
                     host_address_port.ip().octets()[2],
                     host_address_port.ip().octets()[3],
                     host_address_port.port()).unwrap();
-                http_get_request.push_str(&host_address_str).is_ok();
-                //http_get_request.push_str("User-Agent: edge/0.0.1\r\n").is_ok();
-                http_get_request.push_str("Accept: */*\r\n").is_ok();
-                http_get_request.push_str("\r\n").is_ok();
+                http_get_request.push_str(&host_address_str).ok().unwrap();
+                //http_get_request.push_str("User-Agent: edge/0.0.1\r\n").ok().unwrap();
+                http_get_request.push_str("Accept: */*\r\n").ok().unwrap();
+                http_get_request.push_str("\r\n").ok().unwrap();
                 writeln!(uart, "\thttp_get_request: {:?}\r\n", http_get_request).ok().unwrap();
                 let response = send_data(spi_drv, uart, client_socket, unsafe { http_get_request.as_bytes_mut() });
                 match response {
@@ -1155,8 +1154,8 @@ fn http_request(
                 }
             } else {
                 let mut http_post_request: String<STR_LEN> = String::from("POST ");
-                http_post_request.push_str(&request_path).is_ok();
-                http_post_request.push_str(" HTTP/1.1\r\nHost: ").is_ok();
+                http_post_request.push_str(&request_path).ok().unwrap();
+                http_post_request.push_str(" HTTP/1.1\r\nHost: ").ok().unwrap();
                 let mut host_address_str: String<STR_LEN> = String::new();
                 write!(host_address_str, "{}.{}.{}.{}:{:?}\r\n",
                     host_address_port.ip().octets()[0],
@@ -1164,14 +1163,14 @@ fn http_request(
                     host_address_port.ip().octets()[2],
                     host_address_port.ip().octets()[3],
                     host_address_port.port()).unwrap();
-                http_post_request.push_str(&host_address_str).is_ok();
-                http_post_request.push_str("User-Agent: edge/0.0.1\r\n").is_ok();
-                http_post_request.push_str("Accept: */*\r\n").is_ok();
-                http_post_request.push_str("Content-Type: application/json\r\n").is_ok();
-                http_post_request.push_str("Content-Length: 114\r\n").is_ok();
-                http_post_request.push_str("\r\n").is_ok();
-                http_post_request.push_str("{\"temperature\":\"34.7\",\"humidity\":\"2.0\",\"pressure\":\"1012\",\"dust_concentration\":\"763\",\"air_purity\":\"High Pollution\"}\r\n").is_ok();
-                http_post_request.push_str("\r\n").is_ok();
+                http_post_request.push_str(&host_address_str).ok().unwrap();
+                http_post_request.push_str("User-Agent: edge/0.0.1\r\n").ok().unwrap();
+                http_post_request.push_str("Accept: */*\r\n").ok().unwrap();
+                http_post_request.push_str("Content-Type: application/json\r\n").ok().unwrap();
+                http_post_request.push_str("Content-Length: 114\r\n").ok().unwrap();
+                http_post_request.push_str("\r\n").ok().unwrap();
+                http_post_request.push_str("{\"temperature\":\"34.7\",\"humidity\":\"2.0\",\"pressure\":\"1012\",\"dust_concentration\":\"763\",\"air_purity\":\"High Pollution\"}\r\n").ok().unwrap();
+                http_post_request.push_str("\r\n").ok().unwrap();
                 writeln!(uart, "\thttp_post_request: {:?}\r\n", http_post_request).ok().unwrap();
                 let response = send_data(spi_drv, uart, client_socket, unsafe { http_post_request.as_bytes_mut() });
                 match response {
