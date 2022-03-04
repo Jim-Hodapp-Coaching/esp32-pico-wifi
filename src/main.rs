@@ -40,11 +40,8 @@ use embedded_hal::digital::v2::OutputPin;
 
 use crate::hal::spi::Enabled;
 
-use heapless::Vec;
-
 use no_std_net::{Ipv4Addr, SocketAddrV4};
 
-//mod secrets;
 include!("secrets.rs");
 
 /// The linker will place this boot block at the start of our program image. We
@@ -130,7 +127,7 @@ impl SpiDrv {
     }
 
     fn init(&mut self) {
-        // Chip select is active-low, so we'll initialise it to a driven-high state
+        // Chip select is active-low, so we'll initialize it to a driven-high state
         self.esp32_pins.cs.set_high().unwrap();
     }
 
@@ -540,24 +537,10 @@ impl SpiDrv {
                             .ok()
                             .unwrap();
                         if last_param {
-                            let end_command = &mut [END_CMD];
-                            write!(uart, "\t\tsending byte (END_CMD): 0x{:X?} -> ", end_command)
-                                .ok()
-                                .unwrap();
-                            let transfer_results = self.spi.transfer(end_command);
-                            match transfer_results {
-                                Ok(byte) => {
-                                    write!(uart, "read byte: 0x{:X?}\r\n", byte)
-                                        .ok()
-                                        .unwrap();
-                                    return Ok(());
-                                }
-                                Err(e) => {
-                                    write!(uart, "\t\t\tsend_param transfer error: {:?}\r\n", e)
-                                        .ok()
-                                        .unwrap();
-                                    return Err(nb::Error::WouldBlock);
-                                }
+                            let result = self.send_end_cmd(uart);
+                            match result {
+                                Ok(_) => { return Ok(()); }
+                                Err(e) => { return Err(e); }
                             }
                         } else {
                             return Ok(());
@@ -637,7 +620,15 @@ impl SpiDrv {
                 match transfer_results {
                     Ok(byte) => {
                         write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).ok().unwrap();
-                        return Ok(());
+                        if last_param {
+                            let result = self.send_end_cmd(uart);
+                            match result {
+                                Ok(_) => { return Ok(()); }
+                                Err(e) => { return Err(e); }
+                            }
+                        } else {
+                            return Ok(());
+                        }
                     }
                     Err(e) => {
                         return Err(nb::Error::WouldBlock);
@@ -1302,7 +1293,7 @@ fn main() -> ! {
     let mut i: u32 = 0;
     let mut did_once = false; // Only send HTTP POST one time
     loop {
-        // Check for connection in loop and set led on if connected succesfully
+        // Check for connection in loop and set led on if connected successfully
         let result = get_connection_status(&mut spi_drv, &mut uart);
         match result {
             Ok(connected) => {
