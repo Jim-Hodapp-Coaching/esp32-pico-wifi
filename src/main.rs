@@ -640,6 +640,7 @@ impl SpiDrv {
         }
     }
 
+    // Sends END_CMD byte to ESP32 firmware over SPI bus
     fn send_end_cmd(&mut self, uart: &mut EnabledUart) -> SpiResult<()>
     {
         let end_command = &mut [END_CMD];
@@ -925,19 +926,17 @@ fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
                 write!(uart, "{:?}", c).ok().unwrap();
             }
             writeln!(uart, "\r\n").ok().unwrap();
+            spi_drv.esp_deselect();
+            return true;
         }
         Err(e) => {
             writeln!(uart, "\twait_response_cmd(GET_FW_VERSION) Err: {:?}\r", e)
                 .ok()
                 .unwrap();
+            spi_drv.esp_deselect();
             return false;
         }
     }
-    uart.write_full_blocking(b"wait_response_cmd() returned\r\n");
-    spi_drv.esp_deselect();
-    uart.write_full_blocking(b"esp_deselect()\r\n");
-
-    true
 }
 
 fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
