@@ -910,6 +910,8 @@ fn wifi_set_passphrase(
                 write!(uart, "{:?}", c).ok().unwrap();
             }
             writeln!(uart, "\r\n").ok().unwrap();
+            spi_drv.esp_deselect();
+            return true;
         }
         Err(e) => {
             writeln!(uart, "\twifi_set_passphrase_response Err: {:?}\r", e)
@@ -919,10 +921,6 @@ fn wifi_set_passphrase(
             return false;
         }
     }
-
-    spi_drv.esp_deselect();
-
-    true
 }
 
 fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart)
@@ -948,7 +946,6 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart)
             .ok()
             .unwrap();
             spi_drv.esp_deselect();
-            // TODO: Replace connected status with enumerated type (i.e. 0x3 in this case)
             return Ok(status);
         }
         Err(e) => {
@@ -1217,6 +1214,7 @@ fn http_request(
                 http_get_request.push_str("Accept: */*\r\n").ok().unwrap();
                 http_get_request.push_str("\r\n").ok().unwrap();
                 writeln!(uart, "\thttp_get_request: {:?}\r\n", http_get_request).ok().unwrap();
+                // FIXME: for the real crate, don't use unsafe
                 let response = send_data(spi_drv, uart, client_socket, unsafe { http_get_request.as_bytes_mut() });
                 match response {
                     Ok(data) => {
@@ -1245,10 +1243,11 @@ fn http_request(
                 http_post_request.push_str("{\"temperature\":\"34.7\",\"humidity\":\"2.0\",\"pressure\":\"1012\",\"dust_concentration\":\"763\",\"air_purity\":\"High Pollution\"}\r\n").ok().unwrap();
                 http_post_request.push_str("\r\n").ok().unwrap();
                 writeln!(uart, "\thttp_post_request: {:?}\r\n", http_post_request).ok().unwrap();
+                // FIXME: for the real crate, don't use unsafe
                 let response = send_data(spi_drv, uart, client_socket, unsafe { http_post_request.as_bytes_mut() });
                 match response {
                     Ok(data) => {
-                        writeln!(uart, "send_data() response data.len(): {:?}", data.len()).ok().unwrap();
+                        writeln!(uart, "\tsend_data() response data.len(): {:?}\r\n", data.len()).ok().unwrap();
                         return Ok(connected);
                     }
                     Err(e) => { return Err(e); }
@@ -1380,7 +1379,7 @@ fn main() -> ! {
 
                     let host_address_port = SocketAddrV4::new(Ipv4Addr::new(10, 0, 1, 30), 4000);
                     let request_path = String::from("/api/readings/add");
-                    writeln!(uart, "Making HTTP GET request to: http://{:?}{:?}\r\n", host_address_port, request_path).ok().unwrap();
+                    writeln!(uart, "Making HTTP request to: http://{:?}{:?}\r\n", host_address_port, request_path).ok().unwrap();
                     http_request(&mut spi_drv, &mut uart, socket, host_address_port, request_path).ok().unwrap();
 
                     did_once = true;
