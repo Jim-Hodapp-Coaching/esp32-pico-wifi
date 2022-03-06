@@ -27,6 +27,7 @@ use core::fmt::Write;
 use cortex_m::prelude::*;
 use embedded_time::fixed_point::FixedPoint;
 use embedded_time::rate::Extensions;
+use core::convert::From;
 use rp2040_hal::clocks::Clock;
 use rp2040_hal::gpio::bank0::{Gpio0, Gpio1};
 use rp2040_hal::{
@@ -90,6 +91,41 @@ enum SvProtocolMode {
     TLS = 2,
     UDPMulticast = 3,
     TLSBearSSL = 4
+}
+
+// Defines all possible TCP connection states
+#[repr(u8)]
+#[derive(PartialEq, PartialOrd, Debug)]
+enum WlTcpState {
+    Closed      = 0,
+    Listen      = 1,
+    SYNSent     = 2,
+    SYNReceived = 3,
+    Established = 4,
+    FinWait1    = 5,
+    FinWait2    = 6,
+    CloseWait   = 7,
+    Closing     = 8,
+    LastAck     = 9,
+    TimeWait    = 10
+}
+
+// Implements both from() and into()
+impl From<u8> for WlTcpState {
+    fn from(state_u8: u8) -> Self {
+        if state_u8 == 0 { return WlTcpState::Closed; }
+        else if state_u8 == 1 { return WlTcpState::Listen; }
+        else if state_u8 == 2 { return WlTcpState::SYNSent; }
+        else if state_u8 == 3 { return WlTcpState::SYNReceived; }
+        else if state_u8 == 4 { return WlTcpState::Established; }
+        else if state_u8 == 5 { return WlTcpState::FinWait1; }
+        else if state_u8 == 6 { return WlTcpState::FinWait2; }
+        else if state_u8 == 7 { return WlTcpState::CloseWait; }
+        else if state_u8 == 8 { return WlTcpState::Closing; }
+        else if state_u8 == 9 { return WlTcpState::LastAck; }
+        else if state_u8 == 10 { return WlTcpState::TimeWait; }
+        else { return WlTcpState::Closed; }
+    }
 }
 
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
@@ -982,7 +1018,7 @@ fn get_client_state(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     client_socket: u8
-) -> Result<u8, String<STR_LEN>> {
+) -> Result<WlTcpState, String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, GET_CLIENT_STATE_TCP, 1).ok().unwrap();
@@ -1008,8 +1044,7 @@ fn get_client_state(
             .ok()
             .unwrap();
             spi_drv.esp_deselect();
-            // TODO: Replace client state with enumerated type
-            return Ok(params[0]);
+            return Ok(params[0].into());
         }
         Err(e) => {
             writeln!(uart, "\tget_client_state response Err: {:?}\r", e)
@@ -1103,7 +1138,7 @@ fn connect(
         let result = get_client_state(spi_drv, uart, client_socket);
         match result {
             Ok(state) => {
-                if state == 4 { return Ok(true); }
+                if state == WlTcpState::Established { return Ok(true); }
             }
             Err(e) => { return Err(e); }
         }
