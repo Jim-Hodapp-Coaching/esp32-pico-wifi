@@ -128,6 +128,41 @@ impl From<u8> for WlTcpState {
     }
 }
 
+// Defines the WiFi network connection status
+#[repr(u8)]
+#[derive(PartialEq, PartialOrd, Debug)]
+enum WlStatus {
+	NoShield = 255,
+    IdleStatus = 0,
+    NoSsidAvailable,
+    ScanCompleted,
+    Connected,
+    ConnectFailed,
+    ConnectionLost,
+    Disconnected,
+    ApListening,
+    ApConnected,
+    ApFailed
+}
+
+// Implements both from() and into()
+impl From<u8> for WlStatus {
+    fn from(state_u8: u8) -> Self {
+        if state_u8 == 255 { return WlStatus::NoShield; }
+        else if state_u8 == 0 { return WlStatus::IdleStatus; }
+        else if state_u8 == 1 { return WlStatus::NoSsidAvailable; }
+        else if state_u8 == 2 { return WlStatus::ScanCompleted; }
+        else if state_u8 == 3 { return WlStatus::Connected; }
+        else if state_u8 == 4 { return WlStatus::ConnectFailed; }
+        else if state_u8 == 5 { return WlStatus::ConnectionLost; }
+        else if state_u8 == 6 { return WlStatus::Disconnected; }
+        else if state_u8 == 7 { return WlStatus::ApListening; }
+        else if state_u8 == 8 { return WlStatus::ApConnected; }
+        else if state_u8 == 9 { return WlStatus::ApFailed; }
+        else { return WlStatus::IdleStatus; }
+    }
+}
+
 type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
 
 type EnabledUart = hal::uart::UartPeripheral<
@@ -650,7 +685,9 @@ impl SpiDrv {
         let res = self.send_param_len8(uart, 2);
         match res {
             Ok(_) => {
-                let byte_buf: &mut [u8; 2] = &mut [((param & 0xff00) >> 8) as u8, (param & 0xff) as u8];
+                let byte_buf: &mut [u8; 2] =
+                    &mut [((param & 0xff00) >> 8) as u8,
+                    (param & 0xff) as u8];
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(byte) => {
@@ -888,7 +925,8 @@ fn wifi_set_passphrase(
     true
 }
 
-fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> Result<bool, String<STR_LEN>> {
+fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart)
+    -> Result<WlStatus, String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, GET_CONN_STATUS, 0).ok().unwrap();
@@ -900,16 +938,18 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> Result
     let wait_response = spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1);
     match wait_response {
         Ok(params) => {
+            let status: WlStatus = params[0].into();
             write!(
                 uart,
-                "\tget_connection_status_response: {:?}\r\n",
+                "\tget_connection_status_response: {:?} ({:?})\r\n",
+                status,
                 params[0]
             )
             .ok()
             .unwrap();
             spi_drv.esp_deselect();
             // TODO: Replace connected status with enumerated type (i.e. 0x3 in this case)
-            return Ok(params[0] == 0x3);
+            return Ok(status);
         }
         Err(e) => {
             writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e)
@@ -1022,8 +1062,7 @@ fn get_client_state(
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, GET_CLIENT_STATE_TCP, 1).ok().unwrap();
-    let client_socket_param: &mut [u8] = &mut [client_socket];
-    spi_drv.send_param(uart, client_socket_param, true).ok().unwrap();
+    spi_drv.send_param(uart, &mut [client_socket], true).ok().unwrap();
 
     // Pad to multiple of 4
     spi_drv.read_byte(uart).ok().unwrap();
@@ -1329,8 +1368,8 @@ fn main() -> ! {
         // Check for connection in loop and set led on if connected successfully
         let result = get_connection_status(&mut spi_drv, &mut uart);
         match result {
-            Ok(connected) => {
-                if connected && !did_once {
+            Ok(status) => {
+                if status == WlStatus::Connected && !did_once {
                     uart.write_full_blocking(b"** Connected to WiFi\r\n");
 
                     let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
@@ -1345,7 +1384,7 @@ fn main() -> ! {
                     http_request(&mut spi_drv, &mut uart, socket, host_address_port, request_path).ok().unwrap();
 
                     did_once = true;
-                } else if !connected {
+                } else if status != WlStatus::Connected {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 255, 0, 0);
