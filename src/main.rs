@@ -83,6 +83,7 @@ const GET_FW_VERSION: u8 = 0x37u8;
 const GET_CONN_STATUS: u8 = 0x20u8;
 const AVAIL_DATA_TCP: u8 = 0x2bu8;
 const START_CLIENT_TCP: u8 = 0x2du8;
+const STOP_CLIENT_TCP: u8 = 0x2eu8;
 const GET_CLIENT_STATE_TCP: u8 = 0x2fu8;
 const GET_SOCKET: u8 = 0x3fu8;
 
@@ -222,6 +223,13 @@ impl SpiDrv {
         delay.delay_ms(10);
         self.esp32_pins.resetn.set_high().unwrap();
         delay.delay_ms(750);
+    }
+
+    fn available(&mut self) -> bool {
+        // FIXME: how can we treat this like an input when it's set to be an output?
+        // The C++ code from Pimoroni needs more investigation on this.
+        // self.esp32_pins.gpio0.is_high().unwrap();
+        true
     }
 
     fn esp_select(&mut self) {
@@ -1268,7 +1276,9 @@ fn combine_2_bytes(byte0: u8, byte1: u8) -> u16
 fn avail_data_len(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, client_socket: u8)
     -> Result<usize, String<STR_LEN>> {
 
-    // TODO implement gpio0 available check here like in C++ code
+    // If the ESP32 firmware isn't ready to provide a data len, skip asking it
+    // simply return 0 for the len
+    if !spi_drv.available() { return Ok(0); }
 
     spi_drv.wait_for_esp_select();
 
@@ -1286,22 +1296,15 @@ fn avail_data_len(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, client_socket: u
     let wait_response = spi_drv.wait_response_cmd(uart, AVAIL_DATA_TCP, 1);
     match wait_response {
         Ok(len) => {
-            write!(
-                uart,
-                "\tavail_data_tcp: {:?}\r\n",
-                len
-            )
-            .ok()
-            .unwrap();
+            write!(uart, "\tavail_data_tcp: {:?}\r\n", len).ok().unwrap();
             spi_drv.esp_deselect();
+            // Combine the two separate u8's into a single u16 len
             let combined_len: usize = combine_2_bytes(len[1], len[0]) as usize;
             write!(uart, "\tcombined_len: {:?}\r\n", combined_len).ok().unwrap();
             return Ok(combined_len);
         }
         Err(e) => {
-            writeln!(uart, "\tavail_data_tcp response Err: {:?}\r", e)
-                .ok()
-                .unwrap();
+            writeln!(uart, "\tavail_data_tcp response Err: {:?}\r", e).ok().unwrap();
             spi_drv.esp_deselect();
             return Err(String::from("Failed to get available data length response."));
         }
@@ -1332,19 +1335,16 @@ fn start_client(
     }
 
     write!(uart, "\tSending host IP: {:?}\r\n", host_address_port.ip()).ok().unwrap();
-    let octets_param: &mut [u8] = &mut host_address_port.ip().octets();
-    spi_drv.send_param(uart, octets_param, false).ok().unwrap();
+    spi_drv.send_param(uart, &mut host_address_port.ip().octets(), false).ok().unwrap();
 
     write!(uart, "\tSending host port: {:?}\r\n", host_address_port.port()).ok().unwrap();
     spi_drv.send_param_word(uart, host_address_port.port(), false).ok().unwrap();
 
     write!(uart, "\tSending client socket: {:?}\r\n", client_socket).ok().unwrap();
-    let client_socket_param: &mut [u8] = &mut [client_socket];
-    spi_drv.send_param(uart, client_socket_param, false).ok().unwrap();
+    spi_drv.send_param(uart, &mut [client_socket], false).ok().unwrap();
 
     write!(uart, "\tSending protocol mode: {:?}\r\n", protocol_mode).ok().unwrap();
-    let protocol_mode_param: &mut [u8] = &mut [protocol_mode as u8];
-    spi_drv.send_param(uart, protocol_mode_param, true).ok().unwrap();
+    spi_drv.send_param(uart, &mut [protocol_mode as u8], true).ok().unwrap();
 
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
@@ -1352,9 +1352,7 @@ fn start_client(
     let wait_response = spi_drv.wait_response_cmd(uart, START_CLIENT_TCP, 1);
     match wait_response {
         Ok(params) => {
-            write!(uart, "\tstart_client: {:?}\r\n", params[0])
-                .ok()
-                .unwrap();
+            write!(uart, "\tstart_client: {:?}\r\n", params[0]).ok().unwrap();
             spi_drv.esp_deselect();
             return Ok(params[0] == 1);
         }
@@ -1364,6 +1362,54 @@ fn start_client(
                 .unwrap();
             spi_drv.esp_deselect();
             return Err(String::from("Failed to wait_response_cmd(START_CLIENT_TCP"));
+        }
+    }
+}
+ 
+fn stop_client(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    client_socket: u8,
+) -> Result<bool, String<STR_LEN>> {
+    spi_drv.wait_for_esp_select();
+
+    let results = spi_drv.send_cmd(uart, STOP_CLIENT_TCP, 1);
+    match results {
+        Ok(_) => {
+            uart.write_full_blocking(b"\tSent STOP_CLIENT_TCP command\r\n");
+        }
+        Err(e) => {
+            writeln!(uart, "\t** Failed to send STOP_CLIENT_TCP command: {:?}\r\n", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            return Err(String::from("Failed to send_cmd(STOP_CLIENT_TCP"));
+        }
+    }
+
+    write!(uart, "\tSending client socket: {:?}\r\n", client_socket).ok().unwrap();
+    spi_drv.send_param(uart, &mut [client_socket], true).ok().unwrap();
+
+    // Pad to multiple of 4
+    spi_drv.read_byte(uart).ok().unwrap();
+    spi_drv.read_byte(uart).ok().unwrap();
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    let wait_response = spi_drv.wait_response_cmd(uart, STOP_CLIENT_TCP, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tstop_client: {:?}\r\n", params[0]).ok().unwrap();
+            spi_drv.esp_deselect();
+            return Ok(params[0] == 1);
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(STOP_CLIENT_TCP) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            return Err(String::from("Failed to wait_response_cmd(STOP_CLIENT_TCP"));
         }
     }
 }
@@ -1713,7 +1759,6 @@ fn main() -> ! {
     let led_pin = pins.gpio25.into_push_pull_output();
 
     let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
-    writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
 
     let mut i: u32 = 0;
     let mut did_once = false; // Only send HTTP POST one time
@@ -1771,7 +1816,11 @@ fn main() -> ! {
                         }
                     }
 
-                    // TODO: implement and call stop_client() here
+                    // It's important to stop the existing client before trying to start the client again,
+                    // otherwise expect Undefined behavior
+                    uart.write_full_blocking(b"\tstop_client()\r\n");
+                    let stopped = stop_client(&mut spi_drv, &mut uart, socket).ok().unwrap();
+                    if !stopped { write!(uart, "** Failed to stop ESP32 TCP client.\r\n").ok().unwrap(); }
 
                 } else if status != WlStatus::Connected {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
@@ -1784,7 +1833,7 @@ fn main() -> ! {
             }
         }
 
-        write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
+        write!(uart, "Loop ({:?}) ...\r\n\r\n", i).ok().unwrap();
 
         delay.delay_ms(5000);
         i += 1;
