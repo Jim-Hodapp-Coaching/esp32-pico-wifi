@@ -46,6 +46,8 @@ use crate::hal::spi::Enabled;
 use no_std_net::{Ipv4Addr, SocketAddrV4};
 use httparse::Response;
 
+use bme280::BME280;
+
 include!("secrets.rs");
 
 /// The linker will place this boot block at the start of our program image. We
@@ -1266,6 +1268,8 @@ fn combine_2_bytes(byte0: u8, byte1: u8) -> u16
 fn avail_data_len(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, client_socket: u8)
     -> Result<usize, String<STR_LEN>> {
 
+    // TODO implement gpio0 available check here like in C++ code
+
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1).ok().unwrap();
@@ -1402,7 +1406,11 @@ fn http_request<D: DelayMs<u16>>(
     delay: &mut D,
     client_socket: u8,
     host_address_port: SocketAddrV4,
-    request_path: String<STR_LEN>
+    request_path: String<STR_LEN>,
+    temperature: f32,
+    humidity: f32,
+    pressure: f32
+
 ) -> Result<bool, String<STR_LEN>> {
     let result = connect(spi_drv, uart, client_socket, host_address_port);
     match result {
@@ -1451,9 +1459,17 @@ fn http_request<D: DelayMs<u16>>(
                 http_post_request.push_str("User-Agent: edge/0.0.1\r\n").ok().unwrap();
                 http_post_request.push_str("Accept: */*\r\n").ok().unwrap();
                 http_post_request.push_str("Content-Type: application/json\r\n").ok().unwrap();
-                http_post_request.push_str("Content-Length: 114\r\n").ok().unwrap();
+                let mut json_str: String<STR_LEN> = String::new();
+                write!(json_str,
+                    "{{\"temperature\":\"{:.1?}\",\"humidity\":\"{:.1?}\",\"pressure\":\"{:.0?}\",\"dust_concentration\":\"200\",\"air_purity\":\"Low Pollution\"}}\r\n",
+                    temperature, humidity, pressure / 100.0
+                ).ok().unwrap();
+                let mut content_len_str: String<STR_LEN> = String::new();
+                write!(content_len_str, "{:?}\r\n", json_str.len()).ok().unwrap();
+                http_post_request.push_str("Content-Length: ").ok().unwrap();
+                http_post_request.push_str(&content_len_str).ok().unwrap();
                 http_post_request.push_str("\r\n").ok().unwrap();
-                http_post_request.push_str("{\"temperature\":\"34.7\",\"humidity\":\"2.0\",\"pressure\":\"1012\",\"dust_concentration\":\"763\",\"air_purity\":\"High Pollution\"}\r\n").ok().unwrap();
+                http_post_request.push_str(&json_str).ok().unwrap();
                 http_post_request.push_str("\r\n").ok().unwrap();
                 writeln!(uart, "\thttp_post_request: {:?}\r\n", http_post_request).ok().unwrap();
                 // FIXME: for the real crate, don't use unsafe
@@ -1625,6 +1641,32 @@ fn main() -> ! {
 
     uart.write_full_blocking(b"\r\nESP32 Wifi PoC (pre-crate)\r\n");
 
+    // Configure two pins as being I²C, not GPIO
+    let sda_pin = pins.gpio26.into_mode::<hal::gpio::FunctionI2C>();
+    let scl_pin = pins.gpio27.into_mode::<hal::gpio::FunctionI2C>();
+
+    // Create the I²C drive, using the two pre-configured pins. This will fail
+    // at compile time if the pins are in the wrong mode, or if this I²C
+    // peripheral isn't available on these pins!
+    let i2c = hal::i2c::I2C::i2c1(
+        pac.I2C1,
+        sda_pin,
+        scl_pin, // Try `not_an_scl_pin` here
+        400.kHz(),
+        &mut pac.RESETS,
+        clocks.peripheral_clock.freq(),
+    );
+
+    // Initialise the BME280 using the secondary I2C address 0x77
+    let mut bme280 = BME280::new_secondary(i2c);
+
+    // Initialise the sensor
+    let res = bme280.init(&mut delay);
+    match res {
+        Ok(_) => uart.write_full_blocking(b"Successfully initialized BME280 device\r\n"),
+        Err(_) => uart.write_full_blocking(b"Failed to initialize BME280 device\r\n"),
+    }
+
     // init()
     // These are implicitly used by the spi driver if they are in the correct mode
     let spi_miso = pins.gpio16.into_mode::<hal::gpio::FunctionSpi>();
@@ -1659,7 +1701,7 @@ fn main() -> ! {
     set_led(&mut spi_drv, &mut uart, 0, 0, 0);
     delay.delay_ms(500);
 
-    // Set wifi passphrase - ESP32 will attempt to connect after receving this cmd
+    // Set wifi passphrase - ESP32 will attempt to connect after receiving this cmd
     wifi_set_passphrase(
         &mut spi_drv,
         &mut uart,
@@ -1669,6 +1711,9 @@ fn main() -> ! {
     delay.delay_ms(1000);
 
     let led_pin = pins.gpio25.into_push_pull_output();
+
+    let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
+    writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
 
     let mut i: u32 = 0;
     let mut did_once = false; // Only send HTTP POST one time
@@ -1680,16 +1725,20 @@ fn main() -> ! {
                 if status == WlStatus::Connected && !did_once {
                     uart.write_full_blocking(b"** Connected to WiFi\r\n");
 
-                    let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
-                    writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
-
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 0, 255, 0);
+
+                    did_once = true;
+                } else if status == WlStatus::Connected && did_once {
+                    let measurements = bme280.measure(&mut delay).unwrap();
 
                     let host_address_port = SocketAddrV4::new(Ipv4Addr::new(10, 0, 1, 30), 4000);
                     let request_path = String::from("/api/readings/add");
                     writeln!(uart, "Making HTTP request to: http://{:?}{:?}\r\n", host_address_port, request_path).ok().unwrap();
-                    http_request(&mut spi_drv, &mut uart, &mut delay, socket, host_address_port, request_path).ok().unwrap();
+                    http_request(&mut spi_drv, &mut uart, &mut delay,
+                        socket, host_address_port, request_path,
+                        measurements.temperature, measurements.humidity, measurements.pressure
+                    ).ok().unwrap();
 
                     uart.write_full_blocking(b"Getting server response...\r\n---------------------------\r\n");
                     let result = get_server_response(&mut spi_drv, &mut uart, &mut delay, socket);
@@ -1722,7 +1771,8 @@ fn main() -> ! {
                         }
                     }
 
-                    did_once = true;
+                    // TODO: implement and call stop_client() here
+
                 } else if status != WlStatus::Connected {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
                     // Set ESP32 LED green when successfully connected to WiFi AP
@@ -1736,7 +1786,7 @@ fn main() -> ! {
 
         write!(uart, "Loop ({:?}) ...\r", i).ok().unwrap();
 
-        delay.delay_ms(2000);
+        delay.delay_ms(5000);
         i += 1;
     }
 }
