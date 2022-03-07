@@ -44,6 +44,7 @@ use crate::hal::spi::Enabled;
 //use heapless::Vec;
 
 use no_std_net::{Ipv4Addr, SocketAddrV4};
+use httparse::Response;
 
 include!("secrets.rs");
 
@@ -262,16 +263,16 @@ impl SpiDrv {
         // Blocking read, don't return until we've read a byte successfully
         loop {
             let word_out = &mut [DUMMY_DATA];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA)
-                .ok()
-                .unwrap();
+            // write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA)
+            //     .ok()
+            //     .unwrap();
             let read_result = self.spi.transfer(word_out);
             match read_result {
                 Ok(word) => {
                     let byte: u8 = word[0] as u8;
-                    write!(uart, "get_param() read byte: 0x{:X?}\r\n", byte)
-                        .ok()
-                        .unwrap();
+                    // write!(uart, "get_param() read byte: 0x{:X?}\r\n", byte)
+                    //     .ok()
+                    //     .unwrap();
                     return Ok(byte);
                 }
                 Err(e) => {
@@ -505,9 +506,9 @@ impl SpiDrv {
                                         let byte = self.get_param(uart).ok().unwrap();
                                         //buf.push(byte).ok().unwrap();
                                         buf[i] = byte;
-                                        write!(uart, "\t\tbyte [{:?}]: 0x{:X?}\r\n", i, byte)
-                                            .ok()
-                                            .unwrap();
+                                        // write!(uart, "\t\tbyte [{:?}]: 0x{:X?}\r\n", i, byte)
+                                        //     .ok()
+                                        //     .unwrap();
                                         i += 1;
                                     }
                                 }
@@ -727,13 +728,10 @@ impl SpiDrv {
         match res {
             Ok(_) => {
                 let byte_buf = params;
-                write!(uart, "\t\tsending byte[0]: {:X?} -> ", byte_buf[0])
-                    .ok()
-                    .unwrap();
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(transfer_buf) => {
-                        write!(uart, "read bytes: 0x{:X?}\r\n", transfer_buf)
+                        write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf)
                             .ok()
                             .unwrap();
                         if last_param {
@@ -772,13 +770,10 @@ impl SpiDrv {
         match res {
             Ok(_) => {
                 let byte_buf = params;
-                write!(uart, "\t\tsending byte[0]: {:X?} -> ", byte_buf[0])
-                    .ok()
-                    .unwrap();
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
                     Ok(transfer_buf) => {
-                        write!(uart, "read bytes: 0x{:X?}\r\n", transfer_buf)
+                        write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf)
                             .ok()
                             .unwrap();
                         if last_param {
@@ -1562,6 +1557,7 @@ fn get_server_response<D: DelayMs<u16>>(
                 response_len += response_buf.len();
 
                 // TODO: add check for timeout here too
+                return Ok(response_buf);
             }
             Err(e) => { return Err(e); }
         }
@@ -1696,7 +1692,35 @@ fn main() -> ! {
                     http_request(&mut spi_drv, &mut uart, &mut delay, socket, host_address_port, request_path).ok().unwrap();
 
                     uart.write_full_blocking(b"Getting server response...\r\n---------------------------\r\n");
-                    let response = get_server_response(&mut spi_drv, &mut uart, &mut delay, socket);
+                    let result = get_server_response(&mut spi_drv, &mut uart, &mut delay, socket);
+                    match result {
+                        Ok(response_buf) => {
+                            let mut headers = [httparse::EMPTY_HEADER; 64];
+                            let mut response = httparse::Response::new(&mut headers);
+
+                            let result = response.parse(&response_buf);
+                            match result {
+                                Ok(_) => {
+                                    write!(uart, "HTTP response version: {:?}\r\n", response.version.unwrap()).ok().unwrap();
+                                    write!(uart, "HTTP response code: {:?}\r\n", response.code.unwrap()).ok().unwrap();
+                                    write!(uart, "HTTP response reason: {:?}\r\n", response.reason.unwrap()).ok().unwrap();
+
+                                    if response.code.unwrap() == 200 {
+                                        uart.write_full_blocking(b"Got successful response from HTTP server.\r\n");
+                                    } else if response.code.unwrap() == 400 {
+                                        uart.write_full_blocking(b"** Got error response from HTTP server.\r\n");
+                                    }
+                                }
+                                Err(e) => {
+                                    write!(uart, "Failed to parse HTTP server response: {:?}\r\n", e).ok().unwrap();
+                                }
+                            }
+
+                        }
+                        Err(e) => {
+                            write!(uart, "Failed to get HTTP server response: {:?}\r\n", e).ok().unwrap();
+                        }
+                    }
 
                     did_once = true;
                 } else if status != WlStatus::Connected {
