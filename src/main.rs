@@ -378,7 +378,7 @@ impl SpiDrv {
             }
         }
 
-        let param: u16 =  combine_2_bytes(buf[0], buf[1]);
+        let param: u16 =  combine_2_bytes(buf[1], buf[0]);
         writeln!(uart, "\t\tread_param_len16() param: {:?}\r\n", param).ok().unwrap();
 
         Ok(param)
@@ -1266,11 +1266,13 @@ fn get_client_state(
 }
 
 // Accepts two separate bytes and packs them into 2 combined bytes as a u16
+// byte 0 is the LSB, byte1 is the MSB
+// See: https://en.wikipedia.org/wiki/Bit_numbering#LSB_0_bit_numbering
 fn combine_2_bytes(byte0: u8, byte1: u8) -> u16
 {
     let word0: u16 = byte0 as u16;
     let word1: u16 = byte1 as u16;
-    (word0 << 8) | (word1 & 0xff)
+    (word1 << 8) | (word0 & 0xff)
 }
 
 fn avail_data_len(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, client_socket: u8)
@@ -1299,7 +1301,7 @@ fn avail_data_len(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, client_socket: u
             write!(uart, "\tavail_data_tcp: {:?}\r\n", len).ok().unwrap();
             spi_drv.esp_deselect();
             // Combine the two separate u8's into a single u16 len
-            let combined_len: usize = combine_2_bytes(len[1], len[0]) as usize;
+            let combined_len: usize = combine_2_bytes(len[0], len[1]) as usize;
             write!(uart, "\tcombined_len: {:?}\r\n", combined_len).ok().unwrap();
             return Ok(combined_len);
         }
@@ -1567,6 +1569,7 @@ fn get_data_buf(
             .unwrap();
 
             spi_drv.esp_deselect();
+            // TODO: consider returning a tuple, buf + the real len of buf, not its size every time
             return Ok(buf);
         }
         Err(e) => {
