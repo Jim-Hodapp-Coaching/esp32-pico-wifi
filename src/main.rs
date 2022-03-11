@@ -91,6 +91,18 @@ const SEND_DATA_TCP: u8 = 0x44u8;
 const GET_DATABUF_TCP: u8 = 0x45u8;
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 
+#[derive(Debug)]
+enum SpiDrvError {
+    // Receive data errors
+    CmdResponseError,           // Received a CMD_ERR byte from the ESP32
+    CmdResponseTimeout,         // SPI data reading timed out while waiting on the ESP32
+    CmdResponseCheckFailed(u8), // Expected a certain byte but received a different byte
+    CmdResponseInvalidParamNum, // Received an unexpected number of params back from the ESP32
+
+    // Send (transfer) data errors
+    TransferFailed,             // Failed to send a byte of data to the ESP32
+}
+
 // Defines the mode types that the ESP32 firmware can be put into when starting
 // a new client or server instance
 #[repr(u8)]
@@ -173,7 +185,7 @@ impl From<u8> for WlStatus {
     }
 }
 
-type SpiResult<T> = Result<T, nb::Error<core::convert::Infallible>>;
+type SpiResult<T> = Result<T, SpiDrvError>;
 
 type EnabledUart = hal::uart::UartPeripheral<
     rp2040_hal::uart::Enabled,
@@ -269,7 +281,7 @@ impl SpiDrv {
     fn get_param(
         &mut self,
         uart: &mut EnabledUart,
-    ) -> Result<u8, nb::Error<core::convert::Infallible>> {
+    ) -> Result<u8, SpiDrvError> {
         // Blocking read, don't return until we've read a byte successfully
         loop {
             let word_out = &mut [DUMMY_DATA];
@@ -333,11 +345,11 @@ impl SpiDrv {
             match result {
                 Ok(byte_read) => {
                     if byte_read == ERR_CMD {
-                        return Err(nb::Error::WouldBlock);
+                        return Err(SpiDrvError::CmdResponseError);
                     } else if byte_read == wait_byte {
                         return Ok(true);
                     } else if timeout == 0 {
-                        return Ok(false);
+                        return Err(SpiDrvError::CmdResponseTimeout);
                     }
                     timeout -= 1;
                 }
@@ -398,13 +410,19 @@ impl SpiDrv {
                 uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
                 let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
                 match check_result {
-                    Ok(_) => {
+                    Ok(b) => {
+                        // Ensure we see a cmd byte
+                        if !b { return Err(SpiDrvError::CmdResponseCheckFailed(cmd)); }
+
                         uart.write_full_blocking(
                             b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
                         );
                         let check_result = self.read_and_check_byte(uart, num_param);
                         match check_result {
-                            Ok(_) => {
+                            Ok(b) => {
+                                // Ensure we see the number of params we expected to receive back
+                                if !b { return Err(SpiDrvError::CmdResponseCheckFailed(cmd)); }
+
                                 uart.write_full_blocking(
                                     b"\tSuccess: read_and_check_byte(num_param)\r\n",
                                 );
@@ -416,7 +434,7 @@ impl SpiDrv {
                                 if num_param_read > PARAMS_ARRAY_LEN {
                                     // TODO: refactor the type of error this method returns away from nb::Error,
                                     // perhaps to something custom
-                                    return Err(nb::Error::WouldBlock);
+                                    return Err(SpiDrvError::CmdResponseInvalidParamNum);
                                 }
                                 let mut i: usize = 0;
                                 let mut params: [u8; PARAMS_ARRAY_LEN] = [0; PARAMS_ARRAY_LEN];
@@ -461,7 +479,7 @@ impl SpiDrv {
                 }
             }
             Err(e) => {
-                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
+                write!(uart, "\tFailed to check_start_cmd(): {:?}\r\n", e).ok().unwrap();
                 return Err(e);
             }
         }
@@ -486,7 +504,10 @@ impl SpiDrv {
                 uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
                 let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
                 match check_result {
-                    Ok(_) => {
+                    Ok(b) => {
+                        // Ensure we see a cmd byte
+                        if !b { return Err(SpiDrvError::CmdResponseCheckFailed(cmd)); }
+
                         uart.write_full_blocking(
                             b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
                         );
@@ -506,7 +527,7 @@ impl SpiDrv {
 
                                     // Ensure we don't exceed our ResponseBuf size
                                     if param_len > RESPONSE_BUF_SIZE {
-                                        return Err(nb::Error::WouldBlock);
+                                        return Err(SpiDrvError::CmdResponseInvalidParamNum);
                                     }
 
                                     // TODO: break this out into its own equivalent to the C++ function
@@ -525,7 +546,10 @@ impl SpiDrv {
 
                                 let check_result = self.read_and_check_byte(uart, END_CMD);
                                 match check_result {
-                                    Ok(_) => {
+                                    Ok(b) => {
+                                        // Ensure we see a cmd byte
+                                        if !b { return Err(SpiDrvError::CmdResponseCheckFailed(END_CMD)); }
+
                                         uart.write_full_blocking(
                                             b"\tSuccess: read_and_check_byte(END_CMD)\r\n",
                                         );
@@ -556,7 +580,7 @@ impl SpiDrv {
                 }
             }
             Err(e) => {
-                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
+                write!(uart, "\tFailed to check_start_cmd(): {:?}\r\n", e).ok().unwrap();
                 return Err(e);
             }
         }
@@ -684,7 +708,7 @@ impl SpiDrv {
                     write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e)
                         .ok()
                         .unwrap();
-                    return Err(nb::Error::WouldBlock);
+                    return Err(SpiDrvError::TransferFailed);
                 }
             }
         }
@@ -703,7 +727,7 @@ impl SpiDrv {
                 return Ok(());
             }
             Err(e) => {
-                return Err(nb::Error::WouldBlock);
+                return Err(SpiDrvError::TransferFailed);
             }
         }
     }
@@ -720,7 +744,7 @@ impl SpiDrv {
                 return Ok(());
             }
             Err(e) => {
-                return Err(nb::Error::WouldBlock);
+                return Err(SpiDrvError::TransferFailed);
             }
         }
     }
@@ -758,7 +782,7 @@ impl SpiDrv {
                         write!(uart, "send_param transfer error: {:?}\r\n", e)
                             .ok()
                             .unwrap();
-                        return Err(nb::Error::WouldBlock);
+                        return Err(SpiDrvError::TransferFailed);
                     }
                 }
             }
@@ -800,7 +824,7 @@ impl SpiDrv {
                         write!(uart, "send_buffer transfer error: {:?}\r\n", e)
                             .ok()
                             .unwrap();
-                        return Err(nb::Error::WouldBlock);
+                        return Err(SpiDrvError::TransferFailed);
                     }
                 }
             }
@@ -838,7 +862,7 @@ impl SpiDrv {
                         }
                     }
                     Err(e) => {
-                        return Err(nb::Error::WouldBlock);
+                        return Err(SpiDrvError::TransferFailed);
                     }
                 }
             }
@@ -877,7 +901,7 @@ impl SpiDrv {
                         }
                     }
                     Err(e) => {
-                        return Err(nb::Error::WouldBlock);
+                        return Err(SpiDrvError::TransferFailed);
                     }
                 }
             }
@@ -906,7 +930,7 @@ impl SpiDrv {
                 write!(uart, "\t\t\tsend_param transfer error: {:?}\r\n", e)
                     .ok()
                     .unwrap();
-                return Err(nb::Error::WouldBlock);
+                return Err(SpiDrvError::TransferFailed);
             }
         }
     }
@@ -1204,7 +1228,7 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.wait_for_esp_select();
 
     let socket;
-    let wait_response = spi_drv.wait_response_cmd(uart, GET_FW_VERSION, 1);
+    let wait_response = spi_drv.wait_response_cmd(uart, GET_SOCKET, 1);
     match wait_response {
         Ok(params) => {
             write!(uart, "\tget_socket: {:?}\r\n", params[0])
@@ -1458,8 +1482,9 @@ fn http_request<D: DelayMs<u16>>(
     temperature: f32,
     humidity: f32,
     pressure: f32
-
 ) -> Result<bool, String<STR_LEN>> {
+
+    // TODO: implement a timeout handler for when we can't connect to the remote server
     let result = connect(spi_drv, uart, client_socket, host_address_port);
     match result {
         Ok(connected) => {
