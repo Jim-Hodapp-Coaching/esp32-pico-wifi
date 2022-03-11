@@ -421,7 +421,7 @@ impl SpiDrv {
                         match check_result {
                             Ok(b) => {
                                 // Ensure we see the number of params we expected to receive back
-                                if !b { return Err(SpiDrvError::CmdResponseCheckFailed(cmd)); }
+                                if !b { return Err(SpiDrvError::CmdResponseCheckFailed(num_param)); }
 
                                 uart.write_full_blocking(
                                     b"\tSuccess: read_and_check_byte(num_param)\r\n",
