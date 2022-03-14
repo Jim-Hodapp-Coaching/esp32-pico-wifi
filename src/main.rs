@@ -338,8 +338,39 @@ impl SpiDrv {
     }
 
     fn wait_for_byte(&mut self, uart: &mut EnabledUart, wait_byte: u8) -> SpiResult<bool> {
-        let mut timeout: u16 = 1000u16;
+        let mut timeout: u16 = 1000;
+        /*
+        let mut byte_read: u8 = 0;
 
+        while (timeout > 0) && (byte_read != wait_byte)
+        {
+            let result = self.read_byte(uart);
+            match result {
+                Ok(byte) => {
+                    if byte == wait_byte {
+                        return Ok(true);
+                    } else if byte == ERR_CMD {
+                         write!(uart, "*** wait_for_byte(0x{:X?}) received ERR_CMD\r\n", wait_byte).ok().unwrap();
+                         return Err(SpiDrvError::CmdResponseError);
+                    }
+
+                    byte_read = byte;
+                }
+                Err(e) => { return Err(e); }
+            }
+
+            timeout -= 1;
+        }
+
+        if timeout == 0 {
+            write!(uart, "*** wait_for_byte(0x{:X?}) timed out\r\n", wait_byte).ok().unwrap();
+            return Err(SpiDrvError::CmdResponseTimeout);
+        }
+
+        Ok(byte_read == wait_byte)
+        */
+
+        
         loop {
             let result = self.read_byte(uart);
             match result {
@@ -349,6 +380,7 @@ impl SpiDrv {
                     } else if byte_read == wait_byte {
                         return Ok(true);
                     } else if timeout == 0 {
+                        write!(uart, "*** wait_for_byte timed out\r\n").ok().unwrap();
                         return Err(SpiDrvError::CmdResponseTimeout);
                     }
                     timeout -= 1;
@@ -432,8 +464,6 @@ impl SpiDrv {
                                     .ok()
                                     .unwrap();
                                 if num_param_read > PARAMS_ARRAY_LEN {
-                                    // TODO: refactor the type of error this method returns away from nb::Error,
-                                    // perhaps to something custom
                                     return Err(SpiDrvError::CmdResponseInvalidParamNum);
                                 }
                                 let mut i: usize = 0;
