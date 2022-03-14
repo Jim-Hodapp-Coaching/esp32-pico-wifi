@@ -1,5 +1,9 @@
 # A Rust-based Pico driver for the ESP32 wireless feather board from Pimoroni
 
+This is a proof-of-concept project that translates enough of [Pimoroni's C++ code](https://github.com/pimoroni/pimoroni-pico/tree/main/examples/pico_wireless) into a Rust implementation to POST to an [Ambi web backend instance](https://github.com/Jim-Hodapp-Coaching/ambi) with live temperature, pressure and humidity values via a [BME280 sensor](https://www.sparkfun.com/products/13676).
+
+This project will eventually turn into a full open source library that implements most or all of the WiFi functionality for use in any embedded Rust application.
+
 ## Getting started
 
 For more details see the following article on getting started for getting your environment set up
