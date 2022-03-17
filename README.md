@@ -62,9 +62,7 @@ needed at minimum, and some suggested items to make your life even easier.
 ## Installation of development dependencies
 ```
 rustup target install thumbv6m-none-eabi
-cargo install --git https://github.com/rp-rs/probe-run --branch rp2040-support
 cargo install flip-link
-cargo install cargo-edit
 cargo add panic_halt
 ```
 
