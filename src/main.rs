@@ -724,22 +724,10 @@ impl SpiDrv {
         }
 
         if num_param == 0 {
-            let byte_buf = &mut [END_CMD];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", END_CMD)
-                .ok()
-                .unwrap();
-            let transfer_results = self.spi.transfer(byte_buf);
-            match transfer_results {
-                Ok(byte) => {
-                    write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
-                    return Ok(());
-                }
-                Err(e) => {
-                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e)
-                        .ok()
-                        .unwrap();
-                    return Err(SpiDrvError::TransferFailed);
-                }
+            let result = self.send_end_cmd(uart);
+            match result {
+                Ok(_) => { return Ok(()); }
+                Err(e) => { return Err(e); }
             }
         }
         Ok(())
@@ -902,8 +890,8 @@ impl SpiDrv {
         }
     }
 
-       // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
-       fn send_param_word_len16(
+    // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
+    fn send_param_word_len16(
         &mut self,
         uart: &mut EnabledUart,
         param: u16,
@@ -1081,7 +1069,6 @@ fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8
         }
     }
 
-    uart.write_full_blocking(b"\tesp_deselect()\r\n");
     spi_drv.esp_deselect();
 }
 
