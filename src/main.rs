@@ -1050,28 +1050,20 @@ fn set_led(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, red: u8, green: u8, blu
 }
 
 fn analog_write(spi_drv: &mut SpiDrv, uart: &mut EnabledUart, pin: u8, value: u8) {
-    uart.write_full_blocking(b"\twait_for_esp_select()\r\n");
     spi_drv.wait_for_esp_select();
 
-    uart.write_full_blocking(b"\tsend_cmd(SET_ANALOG_WRITE)\r\n");
     spi_drv.send_cmd(uart, SET_ANALOG_WRITE, 2).ok().unwrap();
-    uart.write_full_blocking(b"\tsend_param(pin)\r\n");
     let pin_byte: &mut [u8] = &mut [pin];
     spi_drv.send_param(uart, pin_byte, false).ok().unwrap();
-    uart.write_full_blocking(b"\tsend_param(value)\r\n");
     let value_byte: &mut [u8] = &mut [value];
     spi_drv.send_param(uart, value_byte, true).ok().unwrap(); // LAST_PARAM
 
-    uart.write_full_blocking(b"\tread_byte()\r\n");
     spi_drv.read_byte(uart).ok().unwrap();
 
-    uart.write_full_blocking(b"\tesp_deselect()\r\n");
     spi_drv.esp_deselect();
-    uart.write_full_blocking(b"\twait_for_esp_select()\r\n");
     spi_drv.wait_for_esp_select();
 
     // Wait for a reply from ESP32
-    uart.write_full_blocking(b"\twait_response_cmd()\r\n");
     let wait_response = spi_drv.wait_response_cmd(uart, SET_ANALOG_WRITE, 1);
     match wait_response {
         Ok(params) => {
