@@ -1815,6 +1815,7 @@ fn main() -> ! {
     let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
 
     let mut i: u32 = 0;
+    let mut sleep: u32 = 1500;
     let mut did_once = false; // Only send HTTP POST one time
     loop {
         // Check for connection in loop and set led on if connected successfully
@@ -1876,10 +1877,16 @@ fn main() -> ! {
                     let stopped = stop_client(&mut spi_drv, &mut uart, socket).ok().unwrap();
                     if !stopped { write!(uart, "** Failed to stop ESP32 TCP client.\r\n").ok().unwrap(); }
 
+                    // Sleep 10s in between sending sensor readings to Ambi backend
+                    sleep = 10000;
+
                 } else if status != WlStatus::Connected {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 255, 0, 0);
+
+                    // Until we're connected to WiFi and sending sensor readings, sleep 1.5s
+                    sleep = 1500;
                 }
             }
             Err(e) => {
@@ -1889,7 +1896,7 @@ fn main() -> ! {
 
         write!(uart, "Loop ({:?}) ...\r\n\r\n", i).ok().unwrap();
 
-        delay.delay_ms(5000);
+        delay.delay_ms(sleep);
         i += 1;
     }
 }
