@@ -44,7 +44,7 @@ use crate::hal::spi::Enabled;
 //use heapless::Vec;
 
 use no_std_net::{Ipv4Addr, SocketAddrV4};
-use httparse::Response;
+//use httparse::Response;
 
 use bme280::BME280;
 
@@ -65,9 +65,9 @@ const START_CMD: u8 = 0xE0u8;
 const END_CMD: u8 = 0xEEu8;
 const ERR_CMD: u8 = 0xEFu8;
 
-const CMD_FLAG: u8 = 0;
+//const CMD_FLAG: u8 = 0;
 const REPLY_FLAG: u8 = 1 << 7;
-const DATA_FLAG: u8 = 0x40u8;
+//const DATA_FLAG: u8 = 0x40u8;
 
 // TODO: Change from LEN to SIZE for consistent naming:
 const PARAMS_ARRAY_LEN: usize = 8;
@@ -110,6 +110,7 @@ enum SpiDrvError {
 // a new client or server instance
 #[repr(u8)]
 #[derive(Debug)]
+#[allow(dead_code)]
 enum SvProtocolMode {
     TCP = 0,
     UDP = 1,
@@ -1167,6 +1168,7 @@ fn get_connection_status(spi_drv: &mut SpiDrv, uart: &mut EnabledUart)
     }
 }
 
+#[allow(dead_code)]
 fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     uart.write_full_blocking(b"wait_for_esp_select()\r\n");
     spi_drv.wait_for_esp_select();
@@ -1659,7 +1661,7 @@ fn get_server_response<D: DelayMs<u16>>(
 
     write!(uart, "\tavail_response_len: {:?}\r\n", avail_response_len).ok().unwrap();
 
-    let mut response_len: usize = 0;
+    let response_len: usize = 0;
     //let response_buf: ResponseBuf = Vec::new();
     let response_buf: ResponseBuf = [0; RESPONSE_BUF_SIZE];
     while response_len < avail_response_len {
@@ -1668,7 +1670,7 @@ fn get_server_response<D: DelayMs<u16>>(
         let result = get_data_buf(spi_drv, uart, client_socket, avail_response_len as u16);
         match result {
             Ok(response_buf) => {
-                response_len += response_buf.len();
+                //response_len += response_buf.len();
 
                 // TODO: add check for timeout here too
                 return Ok(response_buf);
