@@ -91,6 +91,8 @@ const SEND_DATA_TCP: u8 = 0x44u8;
 const GET_DATABUF_TCP: u8 = 0x45u8;
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 
+// TODO: this should be renamed or split up so SPI-level functionality and functional layers
+// above can use these errors without being confused by the naming (i.e. SpiDrv...)
 #[derive(Debug)]
 enum SpiDrvError {
     // Receive data errors
@@ -1406,7 +1408,7 @@ fn stop_client(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     client_socket: u8,
-) -> Result<bool, String<STR_LEN>> {
+) -> Result<bool, SpiDrvError> {
     spi_drv.wait_for_esp_select();
 
     let results = spi_drv.send_cmd(uart, STOP_CLIENT_TCP, 1);
@@ -1419,7 +1421,7 @@ fn stop_client(
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Err(String::from("Failed to send_cmd(STOP_CLIENT_TCP"));
+            return Err(SpiDrvError::TransferFailed);
         }
     }
 
@@ -1445,7 +1447,7 @@ fn stop_client(
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Err(String::from("Failed to wait_response_cmd(STOP_CLIENT_TCP"));
+            return Err(SpiDrvError::ServerCommTimeout);
         }
     }
 }
