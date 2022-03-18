@@ -101,6 +101,7 @@ enum SpiDrvError {
 
     // Send (transfer) data errors
     TransferFailed,             // Failed to send a byte of data to the ESP32
+    ServerCommTimeout,          // Communication from client to server timed out
 }
 
 // Defines the mode types that the ESP32 firmware can be put into when starting
@@ -1261,7 +1262,7 @@ fn get_client_state(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     client_socket: u8
-) -> Result<WlTcpState, String<STR_LEN>> {
+) -> Result<WlTcpState, SpiDrvError> {
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, GET_CLIENT_STATE_TCP, 1).ok().unwrap();
@@ -1293,7 +1294,7 @@ fn get_client_state(
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Err(String::from("Failed to get client state response."));
+            return Err(SpiDrvError::ServerCommTimeout);
         }
     }
 }
@@ -1352,7 +1353,7 @@ fn start_client(
     client_socket: u8,
     host_address_port: SocketAddrV4,
     protocol_mode: SvProtocolMode
-) -> Result<bool, String<STR_LEN>> {
+) -> Result<bool, SpiDrvError> {
     spi_drv.wait_for_esp_select();
 
     let results = spi_drv.send_cmd(uart, START_CLIENT_TCP, 4);
@@ -1365,7 +1366,7 @@ fn start_client(
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Err(String::from("Failed to send_cmd(START_CLIENT_TCP"));
+            return Err(SpiDrvError::TransferFailed);
         }
     }
 
@@ -1396,7 +1397,7 @@ fn start_client(
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Err(String::from("Failed to wait_response_cmd(START_CLIENT_TCP"));
+            return Err(SpiDrvError::ServerCommTimeout);
         }
     }
 }
@@ -1449,24 +1450,36 @@ fn stop_client(
     }
 }
 
-fn connect(
+fn connect<D: DelayMs<u16>>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
+    delay: &mut D,
     client_socket: u8,
     host_address_port: SocketAddrV4,
-) -> Result<bool, String<STR_LEN>> {
-    let result = start_client(spi_drv, uart, client_socket, host_address_port, SvProtocolMode::TCP);
-    match result {
-        Ok(b) => { 
-            write!(uart, "Result start_client(): {:?}\r\n", b)
-                .ok()
-                .unwrap();
-            if b == false { return Ok(false); }
+) -> Result<bool, SpiDrvError> {
+
+    // TODO: Should timeout be infinite here, waiting infinitely to connect?
+    let mut timeout: u16 = 1000;
+    while timeout > 0 {
+        let result = start_client(spi_drv, uart, client_socket, host_address_port, SvProtocolMode::TCP);
+        match result {
+            Ok(b) => { 
+                write!(uart, "Result start_client(): {:?}\r\n", b)
+                    .ok()
+                    .unwrap();
+                if b == true { break; }
+                if b == false { return Ok(false); }
+            }
+            Err(SpiDrvError::ServerCommTimeout) => {
+                write!(uart, "ServerCommTimeout for start_client(), retry #{:?}\r\n", timeout).ok().unwrap();
+                delay.delay_ms(1000);
+                timeout -= 1;
+            }
+            Err(e) => { return Err(e); }
         }
-        Err(e) => { return Err(e); }
     }
 
-    let mut timeout: u16 = 1000;
+    timeout = 1000;
     while timeout > 0 {
         let result = get_client_state(spi_drv, uart, client_socket);
         match result {
@@ -1494,7 +1507,7 @@ fn http_request<D: DelayMs<u16>>(
 ) -> Result<bool, String<STR_LEN>> {
 
     // TODO: implement a timeout handler for when we can't connect to the remote server
-    let result = connect(spi_drv, uart, client_socket, host_address_port);
+    let result = connect(spi_drv, uart, delay, client_socket, host_address_port);
     match result {
         Ok(connected) => {
             if connected { uart.write_full_blocking(b"Successfully connected to remote TCP server.\r\n"); }
@@ -1565,7 +1578,7 @@ fn http_request<D: DelayMs<u16>>(
                 }
             }
         }
-        Err(e) => { return Err(e); }
+        Err(e) => { return Err(String::from("Failed to connect() to remote host\r\n")); }
     }
 }
 
