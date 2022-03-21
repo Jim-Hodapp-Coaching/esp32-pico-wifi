@@ -1832,7 +1832,12 @@ fn main() -> ! {
                 } else if status == WlStatus::Connected && did_once {
                     let measurements = bme280.measure(&mut delay).unwrap();
 
-                    let host_address_port = SocketAddrV4::new(Ipv4Addr::new(10, 0, 1, 30), 4000);
+                    let host_address_port = SocketAddrV4::new(Ipv4Addr::new(
+                        NON_PROD_AMBI_IP[0],
+                        NON_PROD_AMBI_IP[1],
+                        NON_PROD_AMBI_IP[2],
+                        NON_PROD_AMBI_IP[3]
+                    ), NON_PROD_AMBI_PORT);
                     let request_path = String::from("/api/readings/add");
                     writeln!(uart, "Making HTTP request to: http://{:?}{:?}\r\n", host_address_port, request_path).ok().unwrap();
                     http_request(&mut spi_drv, &mut uart, &mut delay,
