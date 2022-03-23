@@ -65,6 +65,7 @@ const DATA_FLAG: u8 = 0x40u8;
 
 const PARAMS_ARRAY_LEN: usize = 8;
 const STR_LEN: usize = 512;
+const RESPONSE_BUF_LEN: usize = 1024;
 
 const ESP_LED_R: u8 = 25;
 const ESP_LED_G: u8 = 26;
@@ -76,6 +77,8 @@ const GET_CONN_STATUS: u8 = 0x20u8;
 const GET_SOCKET: u8 = 0x3fu8;
 const START_CLIENT_TCP: u8 = 0x2d;
 const SEND_DATA_TCP: u8 = 0x44;
+const AVAIL_DATA_TCP: u8 = 0x2b;
+const GET_DATABUF_TCP: u8 = 0x45;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 const GET_CLIENT_STATE_TCP: u8   = 0x2fu8;
@@ -434,10 +437,90 @@ impl SpiDrv {
         }
     }
 
+    fn wait_response_data16(
+      &mut self,
+      uart: &mut EnabledUart,
+      cmd: u8,
+      num_param: u8
+    ) -> SpiResult<[u8; RESPONSE_BUF_LEN ]> {
+        uart.write_full_blocking(b"\tStarting wait_response_data16()\r\n");
+        let result = self.check_start_cmd(uart);
+        match result {
+            Ok(b) => {
+                uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
+                let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
+                match check_result {
+                    Ok(_) => {
+                        uart.write_full_blocking(
+                            b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
+                        );
+                        let check_result = self.read_and_check_byte(uart, num_param);
+                        match check_result {
+                            Ok(_) => {
+                                uart.write_full_blocking(
+                                    b"\tSuccess: read_and_check_byte(num_param)\r\n",
+                                );
+                                let num_param_read: usize =
+                                    self.read_param_len16(uart).ok().unwrap() as usize;
+                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read)
+                                    .ok()
+                                    .unwrap();
+                                if num_param_read > RESPONSE_BUF_LEN {
+                                    uart.write_full_blocking(
+                                        b"\tnum_param_read is larger than RESPONSE_BUF_LEN \r\n",
+                                    );
+                                    // TODO: refactor the type of error this method returns away from nb::Error,
+                                    // perhaps to something custom
+                                    return Err(nb::Error::WouldBlock);
+                                }
+                                let mut i: usize = 0;
+                                let mut params: [u8; RESPONSE_BUF_LEN ] = [0; RESPONSE_BUF_LEN ];
+                                while i < num_param_read {
+                                    params[i] = self.get_param(uart).ok().unwrap();
+                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i])
+                                        .ok()
+                                        .unwrap();
+                                    i += 1;
+                                }
 
-
-
-
+                                let check_result = self.read_and_check_byte(uart, END_CMD);
+                                match check_result {
+                                    Ok(_) => {
+                                        uart.write_full_blocking(
+                                            b"\tSuccess: read_and_check_byte(END_CMD)\r\n",
+                                        );
+                                        Ok(params)
+                                    }
+                                    Err(wrong_byte) => {
+                                        uart.write_full_blocking(
+                                            b"\tFailed to read_and_check_byte(END_CMD)\r\n",
+                                        );
+                                        Err(wrong_byte)
+                                    }
+                                }
+                            }
+                            Err(wrong_byte) => {
+                                uart.write_full_blocking(
+                                    b"\tFailed to read_and_check_byte(num_param)\r\n",
+                                );
+                                Err(wrong_byte)
+                            }
+                        }
+                    }
+                    Err(wrong_byte) => {
+                        uart.write_full_blocking(
+                            b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n",
+                        );
+                        Err(wrong_byte)
+                    }
+                }
+            }
+            Err(e) => {
+                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
+                return Err(e);
+            }
+        }
+    }
 
     fn send_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<()> {
         let buf: [u8; 3] = [START_CMD, cmd & !(REPLY_FLAG), num_param];
@@ -481,6 +564,29 @@ impl SpiDrv {
             }
         }
         Ok(())
+    }
+
+    fn read_param_len16(
+        &mut self,
+        uart: &mut EnabledUart
+    ) -> SpiResult<u16> {
+        // TODO figure this out 
+    //   let mut buf: [u16; 2] = [self.read_byte(uart).ok().unwrap() as u16, self.read_byte(uart).ok().unwrap() as u16];
+      let mut param0 = self.read_byte(uart).ok().unwrap();
+      let mut param1 = self.read_byte(uart).ok().unwrap();
+      write!(uart, "read_param_len_16 param0: {:x?} -> \n\n", param0)
+            .ok()
+            .unwrap();
+      write!(uart, "read_param_len_16 param1: {:x?} -> \n\n", param0)
+            .ok()
+            .unwrap();
+      let param0: u16 = (param0 as u16) << 8 as u16;
+      let param1: u16 = (param1 & 0xff) as u16;
+      let param_len = (param0 | param1) as u16;
+      write!(uart, "read_param_len_16 length =  {:x?} -> ", param_len)
+            .ok()
+            .unwrap();
+      Ok(param_len)
     }
 
     fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
@@ -1087,7 +1193,7 @@ fn connect(
     host_address_port: SocketAddrV4,
     socket: u8,
     transport_mode: u8,
-    mut delay: cortex_m::delay::Delay
+    mut delay: &mut cortex_m::delay::Delay
 ) -> Result<bool, String<STR_LEN>> {
     let result = start_client(spi_drv, uart, host_address_port, socket, transport_mode);
     
@@ -1120,13 +1226,119 @@ fn connect(
     return Ok(false);
 }
 
+fn avail_data(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    socket: u8
+) -> Result<u16, String<STR_LEN>> {
+  spi_drv.wait_for_esp_select();
+
+  spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1);
+  let socket_bytes: &mut [u8] = &mut [socket];
+  spi_drv.send_param(uart, socket_bytes, false).ok().unwrap();
+
+  spi_drv.read_byte(uart).ok().unwrap();
+  spi_drv.read_byte(uart).ok().unwrap();
+
+  spi_drv.esp_deselect();
+  spi_drv.wait_for_esp_select();
+
+  let wait_response = spi_drv.wait_response_cmd(uart, AVAIL_DATA_TCP, 1);
+  match wait_response {
+      Ok(params) => {
+          writeln!(uart, "\tavail_data() {:?}\r", params)
+              .ok()
+              .unwrap();
+        spi_drv.esp_deselect();
+        return Ok(params[0] as u16);
+      }
+      Err(e) => {
+          writeln!(uart, "\tavail_data Err: {:?}\r", e)
+              .ok()
+              .unwrap();
+
+          spi_drv.esp_deselect();
+
+          return Err(String::from("Failed to get get avail_data"));
+      }
+  }
+}
+
+fn get_data_buf(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    socket: u8,
+    data_buf: &mut [u8; RESPONSE_BUF_LEN]
+) -> Result<[u8; RESPONSE_BUF_LEN], String<STR_LEN>> {
+    spi_drv.wait_for_esp_select();
+
+    spi_drv.send_cmd(uart, GET_DATABUF_TCP, 2);
+    let socket_bytes: &mut [u8] = &mut [socket];
+    spi_drv.send_buffer(uart, data_buf, true);
+    
+
+    spi_drv.read_byte(uart).ok().unwrap();
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    let wait_response = spi_drv.wait_response_data16(uart, GET_DATABUF_TCP, 1);
+    match wait_response {
+        Ok(params) => {
+            write!(uart, "\tget_data_buf() returned: {:?}\r\n", params)
+                .ok()
+                .unwrap();
+
+            spi_drv.esp_deselect();
+            Ok(params)
+        }
+        Err(e) => {
+            writeln!(uart, "\twait_response_cmd(GET_DATABUF_TCP) Err: {:?}\r", e)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
+            Err(String::from("Error wait_response_cmd(GET_DATABUF_TCP)"))
+        }
+    }
+}
+
+fn receive_response(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    socket: u8,
+    mut delay: cortex_m::delay::Delay
+) -> [u8; RESPONSE_BUF_LEN] {
+   let mut response_length: u16 = 0;
+   let mut avail_length: u16 = 0;
+   let mut n = 0;
+   let mut response_buf: [u8; RESPONSE_BUF_LEN] = [0; RESPONSE_BUF_LEN];
+   while n < 20 {
+     delay.delay_ms(50);
+     avail_length = avail_data(spi_drv, uart, socket).ok().unwrap();
+      if avail_length > 0 {
+        break;
+      }
+   }
+
+  
+  while response_length < avail_length {
+    writeln!(uart, "response_length: {:?} avail_length {:?}\r\n", response_length, avail_length).ok().unwrap();
+    let read_len: u16 = avail_length;
+    get_data_buf(spi_drv, uart, socket, &mut response_buf);
+    response_length += read_len; 
+  }
+
+  writeln!(uart, "response_buf: {:?}\r\n", response_buf).ok().unwrap();
+  return response_buf;
+}
+
 fn http_request(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     socket: u8,
     host_address_port: SocketAddrV4,
     request_path: String<STR_LEN>,
-    delay: cortex_m::delay::Delay
+    delay: &mut cortex_m::delay::Delay
 ) -> Result<u8, String<STR_LEN>> {
     let result = connect(spi_drv, uart, host_address_port, socket, TCP_MODE, delay);
     match result {
@@ -1134,13 +1346,22 @@ fn http_request(
           if connected {
             uart.write_full_blocking(b"\tConnect function succeeded\r\n");
             let octets = host_address_port.ip().octets(); 
-            let mut data: String<STR_LEN> = String::from("GET ");
+            let json = r#"{"temperature":"21.6","humidity":"78.9","pressure":"1100","dust_concentration":"854","air_purity":"Dangerous Pollution"}"#;
+            let mut json_len_str: String<STR_LEN> = String::from("");
+            write!(json_len_str, "{}", json.len());
+            let mut data: String<STR_LEN> = String::from("POST ");
             data.push_str(request_path.as_str()).unwrap();
             data.push_str(" HTTP/1.1\r\n").unwrap();
             data.push_str("Host: ").unwrap();
-            data.push_str("192.168.117.141").unwrap();
-            data.push_str("\r\n").unwrap();
-            data.push_str("Connection: close\r\n\r\n").unwrap();
+            data.push_str("192.168.117.141\r\n").unwrap();
+            data.push_str("Accept: */*\r\n").unwrap();
+            data.push_str("Content-Type: application/json\r\n").unwrap();
+            data.push_str("Content-Length: ").unwrap();
+            data.push_str(json_len_str.as_str()).unwrap();
+            data.push_str("\r\n\r\n").unwrap();
+            data.push_str(json).unwrap();
+            data.push_str("\r\n\r\n").unwrap();
+
 
 
             send_data(spi_drv, uart, socket, data)
@@ -1281,7 +1502,10 @@ fn main() -> ! {
                     let host_address_port = SocketAddrV4::new(Ipv4Addr::new(192, 168, 117, 141), 4000);
                     let request_path = String::from("/api/readings/add");
 
-                    http_request(&mut spi_drv, &mut uart, socket, host_address_port, request_path, delay);
+                    http_request(&mut spi_drv, &mut uart, socket, host_address_port, request_path, &mut delay);
+
+                    receive_response(&mut spi_drv, &mut uart, socket, delay);
+
                     break;
                 } else {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
