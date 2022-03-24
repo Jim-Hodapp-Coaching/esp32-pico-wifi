@@ -55,6 +55,12 @@ needed at minimum, and some suggested items to make your life even easier.
 
 Start with the section [Pico to Pico Wiring in this article](https://reltech.substack.com/p/getting-started-with-rust-on-a-raspberry?s=w) to set up using two Picos together, one as a Picoprobe (flash/debug) and the other as your embedded target.
 
+Once properly wired, it should look similar to the following:
+
+![IMG_3747](https://user-images.githubusercontent.com/3219120/159986814-37c99e4f-97cb-43c8-aa2f-1b325a1eb670.jpg)
+
+![IMG_3746](https://user-images.githubusercontent.com/3219120/159986853-d1f84e01-1caa-4f0f-bc84-53ef79fa25b1.jpg)
+
 __Pico to ESP32 WiFi__
 
 The following table lists the pin name and pin number to properly wire between a Pico board and an ESP32 WiFi. This can be done on a breadboard such as the one listed above. Note that V+/- rail means the +/- columns on the breadboard for use as +5 VDC and GND respectively.
