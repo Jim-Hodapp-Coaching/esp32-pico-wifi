@@ -56,6 +56,8 @@ needed at minimum, and some suggested items to make your life even easier.
 
 __Pico to ESP32 WiFi__
 
+The following table lists the pin name and pin number to properly wire between a Pico board and an ESP32 WiFi. This can be done on a breadboard such as the one listed above. Note that V+/- rail means the +/- columns on the breadboard for use as +5 VDC and GND respectively.
+
 | Pico              | ESP32 WiFi       | Breadboard |
 | ----------------- | ---------------- | ---------- |
 |                   | GND (Pin 3)      | V- rail    |
@@ -76,6 +78,14 @@ __Pico to ESP32 WiFi__
 |                   | GND (Pin 23)     | V- rail    |
 | GP16 (Pin 21)     | MISO (Pin 21)    |            |
 
+__BME280 to Pico__
+
+| BME280 | Pico              | Breadboard |
+| ------ | ----------------- | ---------- |
+| GND    |                   | V- rail    |
+| 3.3V   | 3V3(OUT) (Pin 36) |            |
+| SDA    | I2C1 SDA (Pin 31) |            |
+| SCL    | I2C1 SCL (Pin 32) |            |
 
 ## Software Requirements
 - The standard Rust tooling (cargo, rustup) which you can install from https://rustup.rs/
