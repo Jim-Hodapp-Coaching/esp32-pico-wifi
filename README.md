@@ -51,6 +51,31 @@ needed at minimum, and some suggested items to make your life even easier.
    * __Note__: Only needed if you'd like to participate in developing/debugging parts of this project that communicate
    on the SPI/I2C buses
 
+### Wiring Details
+
+
+__Pico to ESP32 WiFi__
+
+| Pico              | ESP32 WiFi       | Breadboard |
+| ----------------- | ---------------- | ---------- |
+|                   | GND (Pin 3)      | V- rail    |
+| GP2 (Pin 4)       | GPIO0 (Pin 4)    |            |
+| GP7 (Pin 10)      | ESP_CSn (Pin 10) |            |
+| GP8 (Pin 11)      | ESP_RX (Pin 11)  |            |
+| GP9 (Pin 12)      | ESP_TX (Pin 12)  |            |
+| GP10 (Pin 14)     | ACK (Pin 14)     |            |
+| GP11 (Pin 15)     | RESETn (Pin 15)  |            |
+| GP12 (Pin 16)     | SW_A (Pin 16)    |            |
+|                   | GND (Pin 18)     | V- rail    |
+| VBUS (Pin 40)     | VBUS (Pin 40)    |            |
+| VSYS (Pin 39)     | VSYS (Pin 39)    | V+ rail    |
+| GND (Pin 38)      | GND (Pin 38)     | V- rail    |
+| 3V3(OUT) (Pin 36) | 3V3 (Pin 36)     |            |
+| GP19 (Pin 25)     | MOSI (Pin 25)    |            |
+| GP18 (Pin 24)     | SCLK (Pin 24)    |            |
+|                   | GND (Pin 23)     | V- rail    |
+| GP16 (Pin 21)     | MISO (Pin 21)    |            |
+
 
 ## Software Requirements
 - The standard Rust tooling (cargo, rustup) which you can install from https://rustup.rs/
