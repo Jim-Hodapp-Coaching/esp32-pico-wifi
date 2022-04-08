@@ -23,11 +23,14 @@ needed at minimum, and some suggested items to make your life even easier.
 1. [Raspberry Pi Pico with pre-soldered headers](https://www.elektor.com/raspberry-pi-pico-rp2040-with-pre-soldered-headers) (2x)
    * [Alternate distributors](https://www.raspberrypi.com/products/raspberry-pi-pico/)
 
-2. [Pimoroni Pico Wireless Pack](https://shop.pimoroni.com/products/pico-wireless-pack?variant=32369508581459) (1x)
-   * [Alternate distributor](https://www.elektor.com/pimoroni-raspberry-pi-pico-wireless-pack)
+2. Pimoroni Pico Wireless Pack (1x)
+   * [US distributor](https://www.digikey.com/en/products/detail/pimoroni-ltd/PIM548/15851367)
+   * [UK distributor](https://shop.pimoroni.com/products/pico-wireless-pack?variant=32369508581459)
+   * [EU distributor](https://www.elektor.com/pimoroni-raspberry-pi-pico-wireless-pack)
 
-3. [BME280 temperature/pressure/humidity sensor](https://www.sparkfun.com/products/13676) (1x)
-   * __Note__: headers are not pre-soldered, but still easy to connect this board with 3 wires
+3. BME280 temperature/pressure/humidity sensor (1x)
+   * [Pre-soldered version, US distributor](https://www.sparkfun.com/products/13905)
+   * [Non-pre-soldered version, US distributor](https://www.sparkfun.com/products/13676)
    * [Hookup guide](https://learn.sparkfun.com/tutorials/sparkfun-bme280-breakout-hookup-guide)
 
 4. [Breadboard](https://www.sparkfun.com/products/12614) (1x)
@@ -37,7 +40,7 @@ needed at minimum, and some suggested items to make your life even easier.
 ### Optional but Helpful Hardware
 
 1. [Break Away Headers](https://www.sparkfun.com/products/116) (1x)
-   * If you want to solder headers to your BME280 sensor board from above
+   * If you want to solder headers to the non-pre-soldered BME280 sensor board from #2 above
 
 2. [Multi-length Jumper Wire Kit 140pcs](https://www.sparkfun.com/products/124) (1x)
 
