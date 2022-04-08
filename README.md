@@ -50,7 +50,7 @@ needed at minimum, and some suggested items to make your life even easier.
 5. [Saleae Logic 8](https://www.saleae.com/) (1x)
    * __Note__: Only needed if you'd like to participate in developing/debugging parts of this project that communicate
    on the SPI/I2C buses
-   
+
 ### Wiring Details
 
 Start with the section [Pico to Pico Wiring in this article](https://reltech.substack.com/p/getting-started-with-rust-on-a-raspberry?s=w) to set up using two Picos together, one as a Picoprobe (flash/debug) and the other as your embedded target.
@@ -109,6 +109,15 @@ rustup target install thumbv6m-none-eabi
 cargo install flip-link
 cargo add panic_halt
 ```
+
+## Set Up Git Hooks
+
+The esp32-pico-wifi repository makes use of several Git hooks to ensure that code quality standards are met and consistent. To automatically configure these hooks for your local workspace, you can run the following:
+```bash
+./scripts/create-git-hooks
+```
+
+This will create symlinks to the Git hooks, preserving any hooks that you may have already configured.
 
 ## Running
 
