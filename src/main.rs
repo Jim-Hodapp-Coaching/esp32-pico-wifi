@@ -29,15 +29,17 @@ use embedded_time::fixed_point::FixedPoint;
 use embedded_time::rate::Extensions;
 use core::convert::From;
 use rp2040_hal::clocks::Clock;
+use rp2040_hal::i2c::I2C;
 use rp2040_hal::gpio::bank0::{Gpio0, Gpio1};
 use rp2040_hal::{
     gpio::{bank0::Gpio10, bank0::Gpio11, bank0::Gpio2, bank0::Gpio7, Pin},
     pac,
 };
 
-use embedded_hal::blocking::delay::DelayMs;
-use embedded_hal::digital::v2::InputPin;
-use embedded_hal::digital::v2::OutputPin;
+use embedded_hal::delay::blocking::DelayUs;
+use embedded_hal::digital::blocking::InputPin;
+use embedded_hal::digital::blocking::OutputPin;
+use embedded_hal_02::spi::MODE_0;
 
 use crate::hal::spi::Enabled;
 
@@ -46,7 +48,7 @@ use crate::hal::spi::Enabled;
 use no_std_net::{Ipv4Addr, SocketAddrV4};
 //use httparse::Response;
 
-use bme280::BME280;
+use bme280::i2c::BME280;
 
 include!("secrets.rs");
 
@@ -207,6 +209,25 @@ type Params = [u8];
 //type ResponseBuf = Vec<u8, RESPONSE_BUF_SIZE>;
 type ResponseBuf = [u8; RESPONSE_BUF_SIZE];
 
+// Until cortex_m implements the DelayUs trait needed for embedded-hal-1.0.0,
+// provide a wrapper around it
+pub struct DelayWrap(cortex_m::delay::Delay);
+
+impl embedded_hal::delay::blocking::DelayUs for DelayWrap {
+    type Error = core::convert::Infallible;
+
+    fn delay_us(&mut self, us: u32) -> Result<(), Self::Error> {
+        self.0.delay_us(us);
+
+        Ok(())
+    }
+
+    fn delay_ms(&mut self, ms: u32) -> Result<(), Self::Error> {
+        self.0.delay_ms(ms);
+        Ok(())
+    } 
+}
+
 struct Esp32Pins {
     cs: Pin<Gpio7, hal::gpio::PushPullOutput>,
     gpio0: Pin<Gpio2, hal::gpio::PushPullOutput>,
@@ -232,7 +253,7 @@ impl SpiDrv {
         self.esp32_pins.cs.set_high().unwrap();
     }
 
-    pub fn reset<D: DelayMs<u16>>(&mut self, delay: &mut D) {
+    pub fn reset<D: DelayUs>(&mut self, delay: &mut D) {
         self.esp32_pins.gpio0.set_high().unwrap();
         self.esp32_pins.cs.set_high().unwrap();
         self.esp32_pins.resetn.set_low().unwrap();
@@ -1454,7 +1475,7 @@ fn stop_client(
     }
 }
 
-fn connect<D: DelayMs<u16>>(
+fn connect<D: DelayUs>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     delay: &mut D,
@@ -1498,7 +1519,7 @@ fn connect<D: DelayMs<u16>>(
     return Ok(false);
 }
 
-fn http_request<D: DelayMs<u16>>(
+fn http_request<D: DelayUs>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     delay: &mut D,
@@ -1633,7 +1654,7 @@ fn get_data_buf(
     }
 }
 
-fn get_server_response<D: DelayMs<u16>>(
+fn get_server_response<D: DelayUs>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     delay: &mut D,
@@ -1737,7 +1758,8 @@ fn main() -> ! {
         )
         .unwrap();
 
-    let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
+    //let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
+    let mut delay = DelayWrap(cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()));
 
     uart.write_full_blocking(b"\r\nESP32 Wifi PoC (pre-crate)\r\n");
 
@@ -1748,7 +1770,7 @@ fn main() -> ! {
     // Create the I²C drive, using the two pre-configured pins. This will fail
     // at compile time if the pins are in the wrong mode, or if this I²C
     // peripheral isn't available on these pins!
-    let i2c = hal::i2c::I2C::i2c1(
+    let i2c = I2C::i2c1(
         pac.I2C1,
         sda_pin,
         scl_pin, // Try `not_an_scl_pin` here
@@ -1780,7 +1802,7 @@ fn main() -> ! {
         &mut pac.RESETS,
         clocks.peripheral_clock.freq(),
         8_000_000u32.Hz(),
-        &embedded_hal::spi::MODE_0,
+        &MODE_0,
     );
 
     let esp32_pins = Esp32Pins {
