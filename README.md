@@ -106,11 +106,14 @@ __BME280 to Pico__
 
 - flip-link - this allows you to detect stack-overflows on the first core, which is the only supported target for now.
 
+- probe-run - this provides an easy way to run our embedded application on the target device through
+setting a Cargo target.
+
 ## Installation of development dependencies
 ```
 rustup target install thumbv6m-none-eabi
 cargo install flip-link
-cargo add panic_halt
+cargo install probe-run
 ```
 
 ## Set Up Git Hooks
