@@ -259,9 +259,9 @@ impl SpiDrv {
         self.esp32_pins.gpio0.set_high().unwrap();
         self.esp32_pins.cs.set_high().unwrap();
         self.esp32_pins.resetn.set_low().unwrap();
-        delay.delay_ms(10);
+        delay.delay_ms(10).ok().unwrap();
         self.esp32_pins.resetn.set_high().unwrap();
-        delay.delay_ms(750);
+        delay.delay_ms(750).ok().unwrap();
     }
 
     fn available(&mut self) -> bool {
@@ -1499,7 +1499,7 @@ fn connect<D: DelayUs>(
             }
             Err(SpiDrvError::ServerCommTimeout) => {
                 write!(uart, "ServerCommTimeout for start_client(), retry #{:?}\r\n", timeout).ok().unwrap();
-                delay.delay_ms(1000);
+                delay.delay_ms(1000).ok().unwrap();
                 timeout -= 1;
             }
             Err(e) => { return Err(e); }
@@ -1667,7 +1667,7 @@ fn get_server_response<D: DelayUs>(
     let mut timeout: u16 = 1000;
     let mut avail_response_len: usize = 0;
     while timeout > 0 {
-        delay.delay_ms(50);
+        delay.delay_ms(50).ok().unwrap();
         // Get the total length of HTTP response data to read
         let result = avail_data_len(spi_drv, uart, client_socket);
         match result {
@@ -1763,7 +1763,7 @@ fn main() -> ! {
     //let mut delay = cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer());
     let mut delay = DelayWrap(cortex_m::delay::Delay::new(core.SYST, clocks.system_clock.freq().integer()));
 
-    uart.write_full_blocking(b"\r\nESP32 Wifi PoC (pre-crate)\r\n");
+    defmt::info!("\r\nESP32 Wifi PoC (pre-crate)");
 
     // Configure two pins as being I²C, not GPIO
     let sda_pin = pins.gpio26.into_mode::<hal::gpio::FunctionI2C>();
@@ -1787,8 +1787,8 @@ fn main() -> ! {
     // Initialise the sensor
     let res = bme280.init(&mut delay);
     match res {
-        Ok(_) => uart.write_full_blocking(b"Successfully initialized BME280 device\r\n"),
-        Err(_) => uart.write_full_blocking(b"Failed to initialize BME280 device\r\n"),
+        Ok(_) => defmt::debug!("Successfully initialized BME280 device"),
+        Err(_) => defmt::error!("Failed to initialize BME280 device"),
     }
 
     // init()
@@ -1823,7 +1823,7 @@ fn main() -> ! {
 
     // Turn the ESP32's onboard multi-color LED off
     set_led(&mut spi_drv, &mut uart, 0, 0, 0);
-    delay.delay_ms(500);
+    delay.delay_ms(500).ok().unwrap();
 
     // Set wifi passphrase - ESP32 will attempt to connect after receiving this cmd
     wifi_set_passphrase(
@@ -1832,7 +1832,7 @@ fn main() -> ! {
         String::from(SSID),
         String::from(PASSPHRASE),
     );
-    delay.delay_ms(1000);
+    delay.delay_ms(1000).ok().unwrap();
 
     let led_pin = pins.gpio25.into_push_pull_output();
 
@@ -1847,7 +1847,7 @@ fn main() -> ! {
         match result {
             Ok(status) => {
                 if status == WlStatus::Connected && !did_once {
-                    uart.write_full_blocking(b"** Connected to WiFi\r\n");
+                    defmt::info!("** Connected to WiFi");
 
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 0, 255, 0);
@@ -1910,7 +1910,7 @@ fn main() -> ! {
                     sleep = 10000;
 
                 } else if status != WlStatus::Connected {
-                    uart.write_full_blocking(b"** Not connected to WiFi\r\n");
+                    defmt::info!("** Not connected to WiFi");
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 255, 0, 0);
 
@@ -1919,13 +1919,13 @@ fn main() -> ! {
                 }
             }
             Err(e) => {
-                uart.write_full_blocking(b"** Failed to get WiFi connection status\r\n");
+                defmt::warn!("** Failed to get WiFi connection status");
             }
         }
 
         write!(uart, "Loop ({:?}) ...\r\n\r\n", i).ok().unwrap();
 
-        delay.delay_ms(sleep);
+        delay.delay_ms(sleep).ok().unwrap();
         i += 1;
     }
 }
