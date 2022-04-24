@@ -920,7 +920,7 @@ fn send_data(
     spi_drv.send_buffer(uart, &mut [socket], false);
     
     let data_bytes: &mut [u8] = unsafe { data.as_bytes_mut() };
-    write!(uart, "\tsending data with send_data(): {:?}\r\n", data_bytes).unwrap();
+    write!(uart, "\tSending data: {:?}\r\n", data_bytes).unwrap();
     spi_drv.send_buffer(uart, data_bytes, true);
 
     // this could be a usize
@@ -1307,7 +1307,7 @@ fn http_request<D: DelayMs<u16>>(
             http_post_request.push_str("Content-Type: application/json\r\n").unwrap();
             let mut json_str: String<STR_LEN> = String::new();
             write!(json_str,
-                r#"{{"temperature":"{:.1?}","humidity":"{:.1?}","pressure":"{:.0?}","dust_concentration":"200","air_purity":"Low Pollution"}}\r\n"#,
+                r#"{{"temperature":"{:.1?}","humidity":"{:.1?}","pressure":"{:.0?}","dust_concentration":"200","air_purity":"Low Pollution"}}"#,
                 temperature, humidity, pressure / 100.0
             ).ok().unwrap();
             let mut content_len_str: String<STR_LEN> = String::new();
