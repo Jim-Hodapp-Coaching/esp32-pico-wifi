@@ -495,15 +495,15 @@ impl SpiDrv {
         &mut self,
         uart: &mut EnabledUart
     ) -> SpiResult<u16> {
-      let mut buf: [u8; 2] = [
-          self.read_byte(uart).ok().unwrap(),
-          self.read_byte(uart).ok().unwrap()
+        let buf: [u8; 2] = [
+            self.read_byte(uart).ok().unwrap(),
+            self.read_byte(uart).ok().unwrap()
         ];
-    uart.write_full_blocking(b" starting read_param_len16 \r\n");
+        uart.write_full_blocking(b" starting read_param_len16 \r\n");
 
-      let param_length: u16 = self.combine_2_bytes(buf[1], buf[0]);
-      write!(uart, "read_param_len_16 length =  {:?}\r\n", param_length).unwrap();
-      Ok(param_length)
+        let param_length: u16 = self.combine_2_bytes(buf[1], buf[0]);
+        write!(uart, "read_param_len_16 length =  {:?}\r\n", param_length).unwrap();
+        Ok(param_length)
     }
 
     fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
@@ -971,16 +971,14 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
 
-    let mut socket = 0;
     let wait_response = spi_drv.wait_response_cmd(uart, GET_SOCKET, 1);
     match wait_response {
         Ok(params) => {
             write!(uart, "\tget_socket: {:?}\r\n", params[0])
                 .ok()
                 .unwrap();
-            socket = params[0];
             spi_drv.esp_deselect();
-            Ok(socket)
+            Ok(params[0])
         }
         Err(e) => {
             writeln!(uart, "\twait_response_cmd(GET_SOCKET) Err: {:?}\r", e)
@@ -991,6 +989,7 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
         }
     }
 }
+
 fn start_client(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
@@ -1080,13 +1079,13 @@ fn get_client_state(
   }
 }
 
-fn connect(
+fn connect<D: DelayMs<u16>>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
+    delay: &mut D,
     host_address_port: SocketAddrV4,
     socket: u8,
-    transport_mode: u8,
-    delay: &mut cortex_m::delay::Delay
+    transport_mode: u8
 ) -> Result<bool, String<STR_LEN>> {
     let result = start_client(spi_drv, uart, host_address_port, socket, transport_mode);
     
@@ -1155,48 +1154,42 @@ fn avail_data(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     socket: u8
-) -> Result<u16, String<STR_LEN>> {
-  spi_drv.wait_for_esp_select();
+) -> Result<usize, String<STR_LEN>> {
+    spi_drv.wait_for_esp_select();
 
-  spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1);
-  let socket_bytes: &mut [u8] = &mut [socket];
-  spi_drv.send_param(uart, socket_bytes, true).ok().unwrap();
+    spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1);
+    let socket_bytes: &mut [u8] = &mut [socket];
+    spi_drv.send_param(uart, socket_bytes, true).ok().unwrap();
 
-  spi_drv.read_byte(uart).ok().unwrap();
-  spi_drv.read_byte(uart).ok().unwrap();
+    spi_drv.read_byte(uart).ok().unwrap();
+    spi_drv.read_byte(uart).ok().unwrap();
 
-  spi_drv.esp_deselect();
-  spi_drv.wait_for_esp_select();
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
 
-  let wait_response = spi_drv.wait_response_cmd(uart, AVAIL_DATA_TCP, 1);
-  match wait_response {
-      Ok(params) => {
-          writeln!(uart, "\tavail_data() {:?}\r", params)
-              .ok()
-              .unwrap();
-        spi_drv.esp_deselect();
+    let wait_response = spi_drv.wait_response_cmd(uart, AVAIL_DATA_TCP, 1);
+    match wait_response {
+        Ok(params) => {
+            writeln!(uart, "\tavail_data() {:?}\r", params)
+                .ok()
+                .unwrap();
+            spi_drv.esp_deselect();
 
-      let mut word1: u16 = params[0] as u16;
-      let mut word0: u16 = params[1] as u16;
-      
-      let word0: u16 = word0 << 8;
-      let word1: u16 = word1 & 0xff;
-      let param_len = word0 | word1;
-      writeln!(uart, "\tavail_data() after math {:?}\r", param_len)
-              .ok()
-              .unwrap();
-        return Ok(param_len);
-      }
-      Err(e) => {
-          writeln!(uart, "\tavail_data Err: {:?}\r", e)
-              .ok()
-              .unwrap();
+            // Combine the two separate u8's into a single u16 len
+            let combined_len: usize = spi_drv.combine_2_bytes(params[0], params[1]) as usize;
+            write!(uart, "\tcombined_len: {:?}\r\n", combined_len).ok().unwrap();
+            return Ok(combined_len);
+        }
+        Err(e) => {
+            writeln!(uart, "\tavail_data Err: {:?}\r", e)
+                .ok()
+                .unwrap();
 
-          spi_drv.esp_deselect();
+            spi_drv.esp_deselect();
 
-          return Err(String::from("Failed to get get avail_data"));
-      }
-  }
+            return Err(String::from("Failed to get get avail_data"));
+        }
+    }
 }
 
 fn get_data_buf(
@@ -1234,16 +1227,16 @@ fn get_data_buf(
     }
 }
 
-fn get_server_response(
+fn get_server_response<D: DelayMs<u16>>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
-    mut delay: cortex_m::delay::Delay,
+    delay: &mut D,
     socket: u8
 ) -> Result<httparse::Status<usize>, String<STR_LEN>> {
-   let mut response_length: u16 = 0;
-   let mut avail_length: u16 = 0;
-   let mut n = 0;
-   let mut response_buf: [u8; RESPONSE_BUF_LEN] = [0; RESPONSE_BUF_LEN];
+   let response_length: u16 = 0;
+   let mut avail_length: usize = 0;
+   let n = 0;
+   let response_buf: [u8; RESPONSE_BUF_LEN] = [0; RESPONSE_BUF_LEN];
    let mut timeout: u16 = 1000;
 
    while timeout > 0 {
@@ -1257,50 +1250,47 @@ fn get_server_response(
    }
   
     writeln!(uart, "response_length: {:?} avail_length {:?}\r\n", response_length, avail_length).ok().unwrap();
-    let read_len: u16 = avail_length;
-    let response_buf = get_data_buf(spi_drv, uart, socket, avail_length)?; 
+    let response_buf = get_data_buf(spi_drv, uart, socket, avail_length as u16)?; 
 
     let response_str = core::str::from_utf8(&response_buf).unwrap();
                     
     writeln!(uart, "response string: {:?}\r\n", response_str).ok().unwrap();
 
     let mut headers = [httparse::EMPTY_HEADER; 64];
-    let response = httparse::Response::new(&mut headers);
-    let parsed_response = response.parse(&response_buf);
-
-    match parsed_response {
+    let mut response = httparse::Response::new(&mut headers);
+    match response.parse(&response_buf) {
         Ok(parsed) => {
             write!(uart, "HTTP response version: {:?}\r\n", response.version.unwrap()).ok().unwrap();
             write!(uart, "HTTP response code: {:?}\r\n", response.code.unwrap()).ok().unwrap();
             write!(uart, "HTTP response reason: {:?}\r\n", response.reason.unwrap()).ok().unwrap();
 
             if response.code.unwrap() == 200 {
-                writeln!(uart, "Got successful response from HTTP server.");
+                writeln!(uart, "Got successful response from HTTP server.").ok().unwrap();
             } else if response.code.unwrap() == 400 {
-                writeln!(uart, "** Got error response from HTTP server.");
+                writeln!(uart, "** Got error response from HTTP server.").ok().unwrap();
             }
-            return Ok(parsed)
+            return Ok(parsed);
         }
 
         Err(e) => {
-            write!(uart, "Failed to parse HTTP server response: {:?}", e).unwrap();
-            Err(String::from("Failed to parse HTTP server response"))
+            write!(uart, "Failed to parse HTTP server response: {:?}", e).ok().unwrap();
+            return Err(String::from("Failed to parse HTTP server response"));
         }
     }
 }
 
-fn http_request(
+fn http_request<D: DelayMs<u16>>(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
+    delay: &mut D,
     socket: u8,
     host_address_port: SocketAddrV4,
     request_path: String<STR_LEN>,
-    delay: &mut cortex_m::delay::Delay,
     temperature: f32,
     humidity: f32,
     pressure: f32
 ) -> Result<bool, String<STR_LEN>> {
-    match connect(spi_drv, uart, host_address_port, socket, TCP_MODE, delay) {
+    match connect(spi_drv, uart, delay, host_address_port, socket, TCP_MODE) {
       Ok(connected) => {
           if connected {
             uart.write_full_blocking(b"\tConnect function succeeded\r\n");
@@ -1315,10 +1305,7 @@ fn http_request(
                     host_address_port.ip().octets()[3],
                     host_address_port.port()).unwrap();
             http_post_request.push_str(&host_address_str).ok().unwrap();
-            http_post_request.push_str(request_path.as_str()).unwrap();
-            http_post_request.push_str(" HTTP/1.1\r\n").unwrap();
-            http_post_request.push_str("Host: ").unwrap();
-            http_post_request.push_str("192.168.215.141\r\n").unwrap();
+            http_post_request.push_str("User-Agent: edge/0.0.1\r\n").ok().unwrap();
             http_post_request.push_str("Accept: */*\r\n").unwrap();
             http_post_request.push_str("Content-Type: application/json\r\n").unwrap();
             let mut json_str: String<STR_LEN> = String::new();
@@ -1333,6 +1320,7 @@ fn http_request(
             http_post_request.push_str("\r\n").unwrap();
             http_post_request.push_str(&json_str).unwrap();
             http_post_request.push_str("\r\n").unwrap();
+            writeln!(uart, "\thttp_post_request: {:?}\r\n", http_post_request).ok().unwrap();
 
             match send_data(spi_drv, uart, socket, http_post_request) {
                 Ok(data) => {
@@ -1492,28 +1480,35 @@ fn main() -> ! {
                     http_request(
                         &mut spi_drv,
                         &mut uart,
+                        &mut delay,
                         socket,
                         host_address_port,
                         request_path,
-                        &mut delay,
                         EXAMPLE_TEMP,
                         EXAMPLE_HUMIDITY,
                         EXAMPLE_PRESSURE
-                    );
+                    ).ok().unwrap();
 
                     uart.write_full_blocking(b"Getting server response...\r\n---------------------------\r\n");
-                    get_server_response(&mut spi_drv, &mut uart, delay, socket);
+                    match get_server_response(&mut spi_drv, &mut uart, &mut delay, socket) {
+                        Ok(status) => {
+                            writeln!(uart, "Successful HTTP response: {:?}", status).ok().unwrap();
+                        }
+                        Err(e) => {
+                            writeln!(uart, "** HTTP response error: {:?}", e).ok().unwrap();
+                        }
+                    }
 
                     // It's important to stop the existing client before trying to start the client again,
                     // otherwise expect Undefined behavior
                     let stopped = stop_client(&mut spi_drv, &mut uart, socket).ok().unwrap();
-                    if !stopped { writeln!(uart, "** Failed to stop ESP32 TCP client."); }
+                    if !stopped { writeln!(uart, "** Failed to stop ESP32 TCP client.").ok().unwrap(); }
 
                     // Sleep 10s in between sending sensor readings to Ambi backend
                     sleep = 10000;
 
                 } else if status != WlStatus::Connected {
-                    writeln!(uart, "** Not connected to WiFi");
+                    writeln!(uart, "** Not connected to WiFi").ok().unwrap();
                     // Set ESP32 LED green when successfully connected to WiFi AP
                     set_led(&mut spi_drv, &mut uart, 255, 0, 0);
 
