@@ -1293,7 +1293,8 @@ fn http_request<D: DelayMs<u16>>(
     match connect(spi_drv, uart, delay, host_address_port, socket, TCP_MODE) {
       Ok(connected) => {
           if connected {
-            uart.write_full_blocking(b"\tConnect function succeeded\r\n");
+            uart.write_full_blocking(b"Successfully connected to remote TCP server.\r\n");
+
             let mut http_post_request: String<STR_LEN> = String::from("POST ");
             http_post_request.push_str(&request_path).ok().unwrap();
             http_post_request.push_str(" HTTP/1.1\r\nHost: ").ok().unwrap();
@@ -1313,9 +1314,9 @@ fn http_request<D: DelayMs<u16>>(
                 r#"{{"temperature":"{:.1?}","humidity":"{:.1?}","pressure":"{:.0?}","dust_concentration":"200","air_purity":"Low Pollution"}}\r\n"#,
                 temperature, humidity, pressure / 100.0
             ).ok().unwrap();
-            http_post_request.push_str("Content-Length: ").unwrap();
             let mut content_len_str: String<STR_LEN> = String::new();
             write!(content_len_str, "{:?}\r\n", json_str.len()).ok().unwrap();
+            http_post_request.push_str("Content-Length: ").unwrap();
             http_post_request.push_str(&content_len_str).unwrap();
             http_post_request.push_str("\r\n").unwrap();
             http_post_request.push_str(&json_str).unwrap();
@@ -1330,13 +1331,12 @@ fn http_request<D: DelayMs<u16>>(
                 Err(e) => { return Err(e); }
             }
           } else {
-              return Err(String::from("Connect function returned false"));
+              return Err(String::from("Failed to connect() to remote host"));
           }
         
       }
       Err(e) => {
-        uart.write_full_blocking(b"\tConnect function failed with error\r\n");
-        return Err(String::from("Connect function failed with error"));
+        return Err(String::from("Failed to connect() to remote host"));
       }
     }
 }
