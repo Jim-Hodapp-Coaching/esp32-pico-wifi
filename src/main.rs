@@ -79,6 +79,7 @@ const START_CLIENT_TCP: u8 = 0x2d;
 const SEND_DATA_TCP: u8 = 0x44;
 const AVAIL_DATA_TCP: u8 = 0x2b;
 const GET_DATABUF_TCP: u8 = 0x45;
+const STOP_CLIENT_TCP: u8 = 0x2e;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 const GET_CLIENT_STATE_TCP: u8   = 0x2fu8;
@@ -174,16 +175,12 @@ impl SpiDrv {
         // Blocking read, don't return until we've read a byte successfully
         loop {
             let word_out = &mut [DUMMY_DATA];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA)
-                .ok()
-                .unwrap();
-            let read_result = self.spi.transfer(word_out);
-            match read_result {
+            // write!(uart, "\t\tsending byte: 0x{:X?} -> ", DUMMY_DATA)
+            //     .ok()
+            //     .unwrap();
+            match  self.spi.transfer(word_out) {
                 Ok(word) => {
                     let byte: u8 = word[0] as u8;
-                    write!(uart, "get_param() read byte: 0x{:X?}\r\n", byte)
-                        .ok()
-                        .unwrap();
                     return Ok(byte);
                 }
                 Err(e) => {
@@ -194,20 +191,11 @@ impl SpiDrv {
     }
 
     fn read_byte(&mut self, uart: &mut EnabledUart) -> SpiResult<u8> {
-        let result = self.get_param(uart);
-        match result {
-            Ok(byte_out) => {
-                return Ok(byte_out);
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
+        Ok(self.get_param(uart)?)
     }
 
     fn read_and_check_byte(&mut self, uart: &mut EnabledUart, check_byte: u8) -> SpiResult<bool> {
-        let result = self.get_param(uart);
-        match result {
+        match self.get_param(uart) {
             Ok(byte_out) => {
                 write!(
                     uart,
@@ -218,7 +206,11 @@ impl SpiDrv {
                 )
                 .ok()
                 .unwrap();
-                return Ok(byte_out == check_byte);
+                if byte_out == check_byte {
+                    return Ok(true);
+                } else {
+                    return Err(nb::Error::WouldBlock)
+                }
             }
             Err(e) => {
                 return Err(e);
@@ -230,15 +222,14 @@ impl SpiDrv {
         let mut timeout: u16 = 1000u16;
 
         loop {
-            let result = self.read_byte(uart);
-            match result {
+            match self.read_byte(uart) {
                 Ok(byte_read) => {
                     if byte_read == ERR_CMD {
                         return Err(nb::Error::WouldBlock);
                     } else if byte_read == wait_byte {
                         return Ok(true);
                     } else if timeout == 0 {
-                        return Ok(false);
+                        return Err(nb::Error::WouldBlock);
                     }
                     timeout -= 1;
                 }
@@ -250,15 +241,7 @@ impl SpiDrv {
     }
 
     fn check_start_cmd(&mut self, uart: &mut EnabledUart) -> SpiResult<bool> {
-        let result = self.wait_for_byte(uart, START_CMD);
-        match result {
-            Ok(b) => {
-                return Ok(b);
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
+      Ok(self.wait_for_byte(uart, START_CMD)?)
     }
 
     fn wait_response_cmd(
@@ -269,172 +252,37 @@ impl SpiDrv {
     ) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
         // TODO: can we turn this into more of a functional syntax to clean
         // up the deep nesting? Investigate `map` for `Result` in Rust by Example, or use of Combinators
-        let result = self.check_start_cmd(uart);
-        match result {
-            Ok(b) => {
-                uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
-                let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
-                match check_result {
-                    Ok(_) => {
-                        uart.write_full_blocking(
-                            b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
-                        );
-                        let check_result = self.read_and_check_byte(uart, num_param);
-                        match check_result {
-                            Ok(_) => {
-                                uart.write_full_blocking(
-                                    b"\tSuccess: read_and_check_byte(num_param)\r\n",
-                                );
-                                let num_param_read: usize =
-                                    self.get_param(uart).ok().unwrap() as usize;
-                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read)
-                                    .ok()
-                                    .unwrap();
-                                if num_param_read > PARAMS_ARRAY_LEN {
-                                    uart.write_full_blocking(
-                                        b"\tnum_param_read is larger than PARAMS_ARRAY_LEN\r\n",
-                                    );
-                                    // TODO: refactor the type of error this method returns away from nb::Error,
-                                    // perhaps to something custom
-                                    return Err(nb::Error::WouldBlock);
-                                }
-                                let mut i: usize = 0;
-                                // let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
-                                let mut params: [u8; PARAMS_ARRAY_LEN] = [0; PARAMS_ARRAY_LEN];
-                                while i < num_param_read {
-                                    params[i] = self.get_param(uart).ok().unwrap();
-                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i])
-                                        .ok()
-                                        .unwrap();
-                                    i += 1;
-                                }
+        self.check_start_cmd(uart)?;
+        uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
 
-                                let check_result = self.read_and_check_byte(uart, END_CMD);
-                                match check_result {
-                                    Ok(_) => {
-                                        uart.write_full_blocking(
-                                            b"\tSuccess: read_and_check_byte(END_CMD)\r\n",
-                                        );
-                                        Ok(params)
-                                    }
-                                    Err(wrong_byte) => {
-                                        uart.write_full_blocking(
-                                            b"\tFailed to read_and_check_byte(END_CMD)\r\n",
-                                        );
-                                        Err(wrong_byte)
-                                    }
-                                }
-                            }
-                            Err(wrong_byte) => {
-                                uart.write_full_blocking(
-                                    b"\tFailed to read_and_check_byte(num_param)\r\n",
-                                );
-                                Err(wrong_byte)
-                            }
-                        }
-                    }
-                    Err(wrong_byte) => {
-                        uart.write_full_blocking(
-                            b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n",
-                        );
-                        Err(wrong_byte)
-                    }
-                }
-            }
-            Err(e) => {
-                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
-                return Err(e);
-            }
+        self.read_and_check_byte(uart, cmd | REPLY_FLAG)?;
+        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n");
+
+        self.read_and_check_byte(uart, num_param)?;
+        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(num_param)\r\n");
+
+        let num_params_to_read: usize = self.get_param(uart)? as usize;
+        write!(uart, "num_param_read: {:?}\r\n", num_params_to_read).ok().unwrap();
+
+        if num_params_to_read > PARAMS_ARRAY_LEN {
+            uart.write_full_blocking(
+                b"\tnum_param_read is larger than PARAMS_ARRAY_LEN\r\n",
+            );
+            // TODO: refactor the type of error this method returns away from nb::Error,
+            // perhaps to something custom
+            return Err(nb::Error::WouldBlock);
         }
-    }
 
-
-
-    fn wait_response_data8(
-        &mut self,
-        uart: &mut EnabledUart,
-        cmd: u8,
-        num_param: u8,
-    ) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
-        // TODO: can we turn this into more of a functional syntax to clean
-        // up the deep nesting? Investigate `map` for `Result` in Rust by Example, or use of Combinators
-        let result = self.check_start_cmd(uart);
-        match result {
-            Ok(b) => {
-                uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
-                let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
-                match check_result {
-                    Ok(_) => {
-                        uart.write_full_blocking(
-                            b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
-                        );
-                        let check_result = self.read_and_check_byte(uart, num_param);
-                        match check_result {
-                            Ok(_) => {
-                                uart.write_full_blocking(
-                                    b"\tSuccess: read_and_check_byte(num_param)\r\n",
-                                );
-                                let num_param_read: usize =
-                                    self.get_param(uart).ok().unwrap() as usize;
-                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read)
-                                    .ok()
-                                    .unwrap();
-                                if num_param_read > PARAMS_ARRAY_LEN {
-                                    uart.write_full_blocking(
-                                        b"\tnum_param_read is larger than PARAMS_ARRAY_LEN\r\n",
-                                    );
-                                    // TODO: refactor the type of error this method returns away from nb::Error,
-                                    // perhaps to something custom
-                                    return Err(nb::Error::WouldBlock);
-                                }
-                                let mut i: usize = 0;
-                                // let mut params: [u8; PARAMS_ARRAY_LEN] = [0, 0, 0, 0, 0, 0, 0, 0];
-                                let mut params: [u8; PARAMS_ARRAY_LEN] = [0; PARAMS_ARRAY_LEN];
-                                while i < num_param_read {
-                                    params[i] = self.get_param(uart).ok().unwrap();
-                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i])
-                                        .ok()
-                                        .unwrap();
-                                    i += 1;
-                                }
-
-                                let check_result = self.read_and_check_byte(uart, END_CMD);
-                                match check_result {
-                                    Ok(_) => {
-                                        uart.write_full_blocking(
-                                            b"\tSuccess: read_and_check_byte(END_CMD)\r\n",
-                                        );
-                                        Ok(params)
-                                    }
-                                    Err(wrong_byte) => {
-                                        uart.write_full_blocking(
-                                            b"\tFailed to read_and_check_byte(END_CMD)\r\n",
-                                        );
-                                        Err(wrong_byte)
-                                    }
-                                }
-                            }
-                            Err(wrong_byte) => {
-                                uart.write_full_blocking(
-                                    b"\tFailed to read_and_check_byte(num_param)\r\n",
-                                );
-                                Err(wrong_byte)
-                            }
-                        }
-                    }
-                    Err(wrong_byte) => {
-                        uart.write_full_blocking(
-                            b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n",
-                        );
-                        Err(wrong_byte)
-                    }
-                }
-            }
-            Err(e) => {
-                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
-                return Err(e);
-            }
+        let mut params: [u8; PARAMS_ARRAY_LEN] = [0; PARAMS_ARRAY_LEN];
+        for i in 0..num_params_to_read {
+            params[i] = self.get_param(uart).unwrap();
+            write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i]).ok().unwrap();
         }
+
+        self.read_and_check_byte(uart, END_CMD)?;
+        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(END_CMD)\r\n");
+
+        Ok(params)
     }
 
     fn wait_response_data16(
@@ -442,115 +290,59 @@ impl SpiDrv {
       uart: &mut EnabledUart,
       cmd: u8,
       num_param: u8
-    ) -> SpiResult<[u8; RESPONSE_BUF_LEN ]> {
+    ) -> SpiResult<[u8; RESPONSE_BUF_LEN]> {
         uart.write_full_blocking(b"\tStarting wait_response_data16()\r\n");
-        let result = self.check_start_cmd(uart);
-        match result {
-            Ok(b) => {
-                uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
-                let check_result = self.read_and_check_byte(uart, cmd | REPLY_FLAG);
-                match check_result {
-                    Ok(_) => {
-                        uart.write_full_blocking(
-                            b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n",
-                        );
-                        let check_result = self.read_and_check_byte(uart, num_param);
-                        match check_result {
-                            Ok(_) => {
-                                uart.write_full_blocking(
-                                    b"\tSuccess: read_and_check_byte(num_param)\r\n",
-                                );
-                                let num_param_read: usize =
-                                    self.read_param_len16(uart).ok().unwrap() as usize;
-                                write!(uart, "\t\tnum_param_read: {:?}\r\n", num_param_read)
-                                    .ok()
-                                    .unwrap();
-                                if num_param_read > RESPONSE_BUF_LEN {
-                                    uart.write_full_blocking(
-                                        b"\tnum_param_read is larger than RESPONSE_BUF_LEN \r\n",
-                                    );
-                                    // TODO: refactor the type of error this method returns away from nb::Error,
-                                    // perhaps to something custom
-                                    return Err(nb::Error::WouldBlock);
-                                }
-                                let mut i: usize = 0;
-                                let mut params: [u8; RESPONSE_BUF_LEN ] = [0; RESPONSE_BUF_LEN ];
-                                while i < num_param_read {
-                                    params[i] = self.get_param(uart).ok().unwrap();
-                                    write!(uart, "\t\tparams[{:?}]: 0x{:X?}\r\n", i, params[i])
-                                        .ok()
-                                        .unwrap();
-                                    i += 1;
-                                }
 
-                                let check_result = self.read_and_check_byte(uart, END_CMD);
-                                match check_result {
-                                    Ok(_) => {
-                                        uart.write_full_blocking(
-                                            b"\tSuccess: read_and_check_byte(END_CMD)\r\n",
-                                        );
-                                        Ok(params)
-                                    }
-                                    Err(wrong_byte) => {
-                                        uart.write_full_blocking(
-                                            b"\tFailed to read_and_check_byte(END_CMD)\r\n",
-                                        );
-                                        Err(wrong_byte)
-                                    }
-                                }
-                            }
-                            Err(wrong_byte) => {
-                                uart.write_full_blocking(
-                                    b"\tFailed to read_and_check_byte(num_param)\r\n",
-                                );
-                                Err(wrong_byte)
-                            }
-                        }
-                    }
-                    Err(wrong_byte) => {
-                        uart.write_full_blocking(
-                            b"\tFailed to read_and_check_byte(cmd | REPLY_FLAG)\r\n",
-                        );
-                        Err(wrong_byte)
-                    }
-                }
-            }
-            Err(e) => {
-                uart.write_full_blocking(b"\tFailed to check_start_cmd()\r\n");
-                return Err(e);
-            }
+        self.check_start_cmd(uart)?;
+        uart.write_full_blocking(b"\tSuccess: check_start_cmd()\r\n");
+
+        self.read_and_check_byte(uart, cmd | REPLY_FLAG)?;
+        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n");
+
+        let num_params_to_read = self.read_byte(uart)?;
+        write!(uart, "num_params_to_read: {:?}\r\n", num_params_to_read).unwrap();
+        let mut num_params_to_read16: u16 = 0;
+        if num_params_to_read > 0 {
+            num_params_to_read16 = self.read_param_len16(uart)?;
+            write!(uart, "num_params_to_read16: {:?}\r\n", num_params_to_read16).unwrap();
         }
+
+        if num_params_to_read16 as usize > RESPONSE_BUF_LEN {
+            uart.write_full_blocking(b"\tnum_param_read is larger than RESPONSE_BUF_LEN \r\n");
+            // TODO: refactor the type of error this method returns away from nb::Error,
+            // perhaps to something custom
+            return Err(nb::Error::WouldBlock);
+        }
+
+        let mut params: [u8; RESPONSE_BUF_LEN ] = [0; RESPONSE_BUF_LEN ];
+        for i in 0..num_params_to_read16 as usize {
+            params[i] = self.get_param(uart).unwrap();
+        }
+
+        self.read_and_check_byte(uart, END_CMD)?;
+        uart.write_full_blocking(b"\tSuccess: read_and_check_byte(END_CMD)\r\n");
+
+        Ok(params)
     }
 
     fn send_cmd(&mut self, uart: &mut EnabledUart, cmd: u8, num_param: u8) -> SpiResult<()> {
         let buf: [u8; 3] = [START_CMD, cmd & !(REPLY_FLAG), num_param];
         for byte in buf {
             let byte_buf = &mut [byte];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", byte)
-                .ok()
-                .unwrap();
-            let transfer_results = self.spi.transfer(byte_buf);
-            match transfer_results {
+            write!(uart, "\t\tsending byte: 0x{:X?} -> ", byte).unwrap();
+            match self.spi.transfer(byte_buf) {
                 Ok(byte) => {
                     write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
-                    continue;
                 }
                 Err(e) => {
-                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e)
-                        .ok()
-                        .unwrap();
-                    continue;
+                    write!(uart, "send_cmd transfer error: 0x{:X?}\r\n", e).unwrap();
                 }
             }
         }
 
         if num_param == 0 {
             let byte_buf = &mut [END_CMD];
-            write!(uart, "\t\tsending byte: 0x{:X?} -> ", END_CMD)
-                .ok()
-                .unwrap();
-            let transfer_results = self.spi.transfer(byte_buf);
-            match transfer_results {
+            match self.spi.transfer(byte_buf) {
                 Ok(byte) => {
                     write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
                     return Ok(());
@@ -572,32 +364,23 @@ impl SpiDrv {
     ) -> SpiResult<u16> {
         // TODO figure this out 
     //   let mut buf: [u16; 2] = [self.read_byte(uart).ok().unwrap() as u16, self.read_byte(uart).ok().unwrap() as u16];
-      let mut param0 = self.read_byte(uart).ok().unwrap();
-      let mut param1 = self.read_byte(uart).ok().unwrap();
-      write!(uart, "read_param_len_16 param0: {:x?} -> \n\n", param0)
-            .ok()
-            .unwrap();
-      write!(uart, "read_param_len_16 param1: {:x?} -> \n\n", param0)
-            .ok()
-            .unwrap();
-      let param0: u16 = (param0 as u16) << 8 as u16;
-      let param1: u16 = (param1 & 0xff) as u16;
-      let param_len = (param0 | param1) as u16;
-      write!(uart, "read_param_len_16 length =  {:x?} -> ", param_len)
-            .ok()
-            .unwrap();
+    uart.write_full_blocking(b" starting read_param_len16 \r\n");
+      let mut word0: u16 = self.get_param(uart).ok().unwrap() as u16;
+      let mut word1: u16 = self.get_param(uart).ok().unwrap() as u16;
+      write!(uart, "read_param_len_16 param0: {:?} -> \r\n", word0).unwrap();
+      write!(uart, "read_param_len_16 param1: {:?} -> \r\n", word1).unwrap();
+      
+      let word0: u16 = word0 << 8;
+      let word1: u16 = word1 & 0xff;
+      let param_len = word0 | word1;
+      write!(uart, "read_param_len_16 length =  {:?}\r\n", param_len).unwrap();
       Ok(param_len)
     }
 
     fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
-        let byte_buf = &mut [param_len];
-        write!(uart, "\t\tsending byte: 0x{:X?} -> ", param_len)
-            .ok()
-            .unwrap();
-        let transfer_results = self.spi.transfer(byte_buf);
-        match transfer_results {
+        match self.spi.transfer(&mut [param_len]) {
             Ok(byte) => {
-                write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                write!(uart, "read byte: 0x{:X?}\r\n", byte).unwrap();
                 return Ok(());
             }
             Err(e) => {
@@ -613,13 +396,10 @@ impl SpiDrv {
         param_len: u16
     ) -> SpiResult<()> {
     let byte_buf: &mut [u8; 2] = &mut [((param_len & 0xff00) >> 8) as u8, (param_len & 0xff) as u8];
-        write!(uart, "\t\tsending byte send_param_len16: 0x{:X?} -> ", byte_buf)
-        .ok()
-        .unwrap();
-        let transfer_results = self.spi.transfer(byte_buf);
-        match transfer_results {
+        write!(uart, "sending byte send_param_len16: 0x{:X?} \n", byte_buf).unwrap();
+        match self.spi.transfer(byte_buf) {
             Ok(byte) => {
-                write!(uart, "read byte: 0x{:X?}\r\n", byte).ok().unwrap();
+                write!(uart, "read byte: 0x{:X?}\r\n", byte).unwrap();
                 return Ok(());
             }
             Err(e) => {
@@ -632,35 +412,21 @@ impl SpiDrv {
         &mut self,
         uart: &mut EnabledUart,
         buffer: &mut [u8],
-        last_param: bool
-      
+        last_param: bool   
       ) -> SpiResult<()> {
-          self.send_param_len16(uart, buffer.len() as u16);
-
-          let transfer_results = self.spi.transfer(buffer);
-
-          match transfer_results {
+          self.send_param_len16(uart, buffer.len() as u16)?;
+          
+          match self.spi.transfer(buffer) {
             Ok(transfer_buf) => {
-                write!(uart, "\t\tread bytes: send_buffer() 0x{:X?}\r\n", transfer_buf)
-                    .ok()
-                    .unwrap();
+                write!(uart, "\t\tread bytes: send_buffer() 0x{:X?}\r\n", transfer_buf).unwrap();
                 if last_param {
                     let end_command = &mut [END_CMD];
-                    write!(uart, "\t\t\tsending byte sending END_CMD send_buf(): 0x{:X?} -> ", end_command)
-                        .ok()
-                        .unwrap();
-                    let transfer_results = self.spi.transfer(end_command);
-                    match transfer_results {
+                    write!(uart, "\t\tsend_buffer() sending END_CMD: 0x{:X?}\n", end_command).unwrap();
+                    match self.spi.transfer(end_command) {
                         Ok(byte) => {
-                            write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte)
-                                .ok()
-                                .unwrap();
                             return Ok(());
                         }
                         Err(e) => {
-                            write!(uart, "\t\t\tsend_buffer() END_CMD transfer error: 0x{:X?}\r\n", e)
-                                .ok()
-                                .unwrap();
                             return Err(nb::Error::WouldBlock);
                         }
                     }
@@ -669,9 +435,7 @@ impl SpiDrv {
                 }
             }
             Err(e) => {
-                write!(uart, "send_buffer transfer error: 0x{:X?}\r\n", e)
-                    .ok()
-                    .unwrap();
+                write!(uart, "send_buffer transfer error: 0x{:X?}\r\n", e).unwrap();
                 return Err(nb::Error::WouldBlock);
             }
         }
@@ -685,18 +449,48 @@ impl SpiDrv {
         last_param: bool,
     ) -> SpiResult<()> {
         let param_len: u8 = params.len() as u8;
-        let res = self.send_param_len8(uart, param_len);
-        match res {
+
+        self.send_param_len8(uart, param_len)?;
+        match self.spi.transfer(params) {
+            Ok(transfer_buf) => {
+                write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf).unwrap();
+                if last_param {
+                    let end_command = &mut [END_CMD];
+                    write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", end_command).unwrap();
+                    let transfer_results = self.spi.transfer(end_command);
+                    match transfer_results {
+                        Ok(byte) => {
+                            write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).unwrap();
+                            return Ok(());
+                        }
+                        Err(e) => {
+                            write!(uart, "\t\t\tsend_param transfer error: 0x{:X?}\r\n", e).unwrap();
+                            return Err(nb::Error::WouldBlock);
+                        }
+                    }
+                } else {
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                return Err(nb::Error::WouldBlock);
+            }
+        }
+    }
+
+    fn send_param_word_len16(
+        &mut self,
+        uart: &mut EnabledUart,
+        param: u16,
+        last_param: bool
+    ) -> SpiResult<()> {
+        match self.send_param_len16(uart, 2) {
             Ok(_) => {
-                // TODO: this doesn't quite match the C++ code yet, seems it can send a
-                // variable length buf
-                let byte_buf = params;
+                let byte_buf: &mut [u8; 2] = &mut [((param & 0xff00) >> 8) as u8, (param & 0xff) as u8];
                 let transfer_results = self.spi.transfer(byte_buf);
                 match transfer_results {
-                    Ok(transfer_buf) => {
-                        write!(uart, "\t\tread bytes: 0x{:X?}\r\n", transfer_buf)
-                            .ok()
-                            .unwrap();
+                    Ok(byte) => {
+                        write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).ok().unwrap();
                         if last_param {
                             let end_command = &mut [END_CMD];
                             write!(uart, "\t\t\tsending byte: 0x{:X?} -> ", end_command)
@@ -722,9 +516,6 @@ impl SpiDrv {
                         }
                     }
                     Err(e) => {
-                        write!(uart, "send_param transfer error: 0x{:X?}\r\n", e)
-                            .ok()
-                            .unwrap();
                         return Err(nb::Error::WouldBlock);
                     }
                 }
@@ -733,6 +524,7 @@ impl SpiDrv {
                 return Err(e);
             }
         }
+
     }
 
     // TODO: replace last_param with an enumerated type, e.g. NO_LAST_PARAM, LAST_PARAM
@@ -1026,9 +818,7 @@ fn send_data(
     spi_drv.send_buffer(uart, &mut [socket], false);
     
     let data_bytes: &mut [u8] = unsafe { data.as_bytes_mut() };
-    write!(uart, "\tsending data with send_data(): {:?}\r\n", data_bytes)
-                .ok()
-                .unwrap();
+    write!(uart, "\tsending data with send_data(): {:?}\r\n", data_bytes).unwrap();
     spi_drv.send_buffer(uart, data_bytes, true);
 
     // this could be a usize
@@ -1226,6 +1016,27 @@ fn connect(
     return Ok(false);
 }
 
+fn stop_client(
+    spi_drv: &mut SpiDrv,
+    uart: &mut EnabledUart,
+    socket: u8
+) {
+    spi_drv.wait_for_esp_select();
+
+    spi_drv.send_cmd(uart, STOP_CLIENT_TCP, 1);
+    spi_drv.send_param(uart, &mut [socket], true);
+
+    spi_drv.read_byte(uart).unwrap();
+    spi_drv.read_byte(uart).unwrap();
+
+    spi_drv.esp_deselect();
+    spi_drv.wait_for_esp_select();
+
+    spi_drv.wait_response_cmd(uart, STOP_CLIENT_TCP, 1).unwrap();
+
+    spi_drv.esp_deselect();
+}
+
 fn avail_data(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
@@ -1235,7 +1046,7 @@ fn avail_data(
 
   spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1);
   let socket_bytes: &mut [u8] = &mut [socket];
-  spi_drv.send_param(uart, socket_bytes, false).ok().unwrap();
+  spi_drv.send_param(uart, socket_bytes, true).ok().unwrap();
 
   spi_drv.read_byte(uart).ok().unwrap();
   spi_drv.read_byte(uart).ok().unwrap();
@@ -1250,7 +1061,17 @@ fn avail_data(
               .ok()
               .unwrap();
         spi_drv.esp_deselect();
-        return Ok(params[0] as u16);
+
+      let mut word1: u16 = params[0] as u16;
+      let mut word0: u16 = params[1] as u16;
+      
+      let word0: u16 = word0 << 8;
+      let word1: u16 = word1 & 0xff;
+      let param_len = word0 | word1;
+      writeln!(uart, "\tavail_data() after math {:?}\r", param_len)
+              .ok()
+              .unwrap();
+        return Ok(param_len);
       }
       Err(e) => {
           writeln!(uart, "\tavail_data Err: {:?}\r", e)
@@ -1268,36 +1089,33 @@ fn get_data_buf(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     socket: u8,
-    data_buf: &mut [u8; RESPONSE_BUF_LEN]
+    avail_len: u16
 ) -> Result<[u8; RESPONSE_BUF_LEN], String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, GET_DATABUF_TCP, 2);
     let socket_bytes: &mut [u8] = &mut [socket];
-    spi_drv.send_buffer(uart, data_buf, true);
+    writeln!(uart, "get_data_buf socket: {:?}\r\n", socket_bytes).ok().unwrap();
+    spi_drv.send_buffer(uart, socket_bytes, false);
+    spi_drv.send_param_word_len16(uart, avail_len, true).ok().unwrap();
     
-
-    spi_drv.read_byte(uart).ok().unwrap();
+    spi_drv.read_byte(uart).unwrap();
 
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
 
-    let wait_response = spi_drv.wait_response_data16(uart, GET_DATABUF_TCP, 1);
-    match wait_response {
+    match spi_drv.wait_response_data16(uart, GET_DATABUF_TCP, 1) {
         Ok(params) => {
-            write!(uart, "\tget_data_buf() returned: {:?}\r\n", params)
-                .ok()
-                .unwrap();
 
             spi_drv.esp_deselect();
             Ok(params)
         }
         Err(e) => {
-            writeln!(uart, "\twait_response_cmd(GET_DATABUF_TCP) Err: {:?}\r", e)
+            writeln!(uart, "\twait_response_data16(GET_DATABUF_TCP) Err: {:?}\r", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            Err(String::from("Error wait_response_cmd(GET_DATABUF_TCP)"))
+            Err(String::from("Error wait_response_data16(GET_DATABUF_TCP)"))
         }
     }
 }
@@ -1307,11 +1125,12 @@ fn receive_response(
     uart: &mut EnabledUart,
     socket: u8,
     mut delay: cortex_m::delay::Delay
-) -> [u8; RESPONSE_BUF_LEN] {
+) -> Result<httparse::Status<usize>, String<STR_LEN>> {
    let mut response_length: u16 = 0;
    let mut avail_length: u16 = 0;
    let mut n = 0;
    let mut response_buf: [u8; RESPONSE_BUF_LEN] = [0; RESPONSE_BUF_LEN];
+
    while n < 20 {
      delay.delay_ms(50);
      avail_length = avail_data(spi_drv, uart, socket).ok().unwrap();
@@ -1319,17 +1138,19 @@ fn receive_response(
         break;
       }
    }
-
   
-  while response_length < avail_length {
     writeln!(uart, "response_length: {:?} avail_length {:?}\r\n", response_length, avail_length).ok().unwrap();
     let read_len: u16 = avail_length;
-    get_data_buf(spi_drv, uart, socket, &mut response_buf);
-    response_length += read_len; 
-  }
+    let response_buf = get_data_buf(spi_drv, uart, socket, avail_length)?; 
 
-  writeln!(uart, "response_buf: {:?}\r\n", response_buf).ok().unwrap();
-  return response_buf;
+    let response_str = core::str::from_utf8(&response_buf).unwrap();
+                    
+    writeln!(uart, "response string: {:?}\r\n", response_str).ok().unwrap();
+
+  let mut headers = [httparse::EMPTY_HEADER; 64];
+  let mut response = httparse::Response::new(&mut headers).parse(&response_buf).unwrap();
+    
+return Ok(response);
 }
 
 fn http_request(
@@ -1353,7 +1174,7 @@ fn http_request(
             data.push_str(request_path.as_str()).unwrap();
             data.push_str(" HTTP/1.1\r\n").unwrap();
             data.push_str("Host: ").unwrap();
-            data.push_str("192.168.117.141\r\n").unwrap();
+            data.push_str("192.168.215.141\r\n").unwrap();
             data.push_str("Accept: */*\r\n").unwrap();
             data.push_str("Content-Type: application/json\r\n").unwrap();
             data.push_str("Content-Length: ").unwrap();
@@ -1499,13 +1320,18 @@ fn main() -> ! {
                     // let socket = get_socket(&mut spi_drv, &mut uart).ok().unwrap();
 
                     writeln!(uart, "socket: {:?}\r\n", socket).ok().unwrap();
-                    let host_address_port = SocketAddrV4::new(Ipv4Addr::new(192, 168, 117, 141), 4000);
+                    let host_address_port = SocketAddrV4::new(Ipv4Addr::new(192, 168, 215, 141), 4000);
                     let request_path = String::from("/api/readings/add");
 
                     http_request(&mut spi_drv, &mut uart, socket, host_address_port, request_path, &mut delay);
 
-                    receive_response(&mut spi_drv, &mut uart, socket, delay);
+                    let response = receive_response(&mut spi_drv, &mut uart, socket, delay).unwrap();
 
+                    write!(uart, "Response length: {:?}", response.unwrap());
+
+                    stop_client(&mut spi_drv, &mut uart, socket);
+                    
+                    
                     break;
                 } else {
                     uart.write_full_blocking(b"** Not connected to WiFi\r\n");
