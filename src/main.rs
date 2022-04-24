@@ -409,20 +409,20 @@ impl SpiDrv {
         uart.write_full_blocking(b"\tSuccess: read_and_check_byte(cmd | REPLY_FLAG)\r\n");
 
         let num_params_to_read = self.read_byte(uart)?;
-        write!(uart, "num_params_to_read: {:?}\r\n", num_params_to_read).unwrap();
-        let mut num_params_to_read16: usize = 0;
+        write!(uart, "\tnum_params_to_read: {:?}\r\n", num_params_to_read).unwrap();
+        let mut param_len: usize = 0;
         if num_params_to_read > 0 {
-            num_params_to_read16 = self.read_param_len16(uart)? as usize;
-            write!(uart, "num_params_to_read16: {:?}\r\n", num_params_to_read16).unwrap();
+            param_len = self.read_param_len16(uart)? as usize;
+            write!(uart, "\tparam_len: {:?}\r\n", param_len).unwrap();
         }
 
-        if num_params_to_read16 > RESPONSE_BUF_LEN {
+        if param_len > RESPONSE_BUF_LEN {
             uart.write_full_blocking(b"\tnum_param_read is larger than RESPONSE_BUF_LEN \r\n");
             return Err(SpiDrvError::CmdResponseInvalidParamNum);
         }
 
         let mut params: [u8; RESPONSE_BUF_LEN ] = [0; RESPONSE_BUF_LEN ];
-        for i in 0..num_params_to_read16 as usize {
+        for i in 0..param_len as usize {
             params[i] = self.get_param(uart).unwrap();
         }
 
@@ -524,11 +524,13 @@ impl SpiDrv {
         uart: &mut EnabledUart,
         param_len: u16
     ) -> SpiResult<()> {
-    let byte_buf: &mut [u8; 2] = &mut [((param_len & 0xff00) >> 8) as u8, (param_len & 0xff) as u8];
-        write!(uart, "sending byte send_param_len16: 0x{:X?} \n", byte_buf).unwrap();
+        let byte_buf: &mut [u8; 2] = &mut [((param_len & 0xff00) >> 8) as u8, (param_len & 0xff) as u8];
+        write!(uart, "\t\tsending byte_buf [0x{:X?}, 0x{:X?}] (len16)\r\n", byte_buf[0], byte_buf[1])
+            .ok()
+            .unwrap();
         match self.spi.transfer(byte_buf) {
             Ok(byte) => {
-                write!(uart, "read byte: 0x{:X?}\r\n", byte).unwrap();
+                write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).unwrap();
                 return Ok(());
             }
             Err(e) => {
@@ -617,18 +619,8 @@ impl SpiDrv {
                         write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).ok().unwrap();
                         if last_param {   
                             match self.send_end_cmd(uart) {
-                                Ok(byte) => {
-                                    write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte)
-                                        .ok()
-                                        .unwrap();
-                                    return Ok(());
-                                }
-                                Err(e) => {
-                                    write!(uart, "\t\t\tsend_param transfer error: 0x{:X?}\r\n", e)
-                                        .ok()
-                                        .unwrap();
-                                    return Err(e);
-                                }
+                                Ok(byte) => { return Ok(()); }
+                                Err(e) => { return Err(e); }
                             }
                         } else {
                             return Ok(());
@@ -1200,10 +1192,8 @@ fn get_data_buf(
 ) -> Result<[u8; RESPONSE_BUF_LEN], String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
-    spi_drv.send_cmd(uart, GET_DATABUF_TCP, 2);
-    let socket_bytes: &mut [u8] = &mut [socket];
-    writeln!(uart, "get_data_buf socket: {:?}\r\n", socket_bytes).ok().unwrap();
-    spi_drv.send_buffer(uart, socket_bytes, false);
+    spi_drv.send_cmd(uart, GET_DATABUF_TCP, 2).ok().unwrap();
+    spi_drv.send_buffer(uart, &mut [socket], false).ok().unwrap();
     spi_drv.send_param_word_len16(uart, avail_len, true).ok().unwrap();
     
     spi_drv.read_byte(uart).unwrap();
@@ -1212,10 +1202,16 @@ fn get_data_buf(
     spi_drv.wait_for_esp_select();
 
     match spi_drv.wait_response_data16(uart, GET_DATABUF_TCP, 1) {
-        Ok(params) => {
-
+        Ok(buf) => {
+            write!(
+                uart,
+                "\t\tget_databuf_tcp buf.len(): {:?}\r\n",
+                buf.len()
+            )
+            .ok()
+            .unwrap();
             spi_drv.esp_deselect();
-            Ok(params)
+            Ok(buf)
         }
         Err(e) => {
             writeln!(uart, "\twait_response_data16(GET_DATABUF_TCP) Err: {:?}\r", e)
