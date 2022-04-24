@@ -104,9 +104,9 @@ __BME280 to Pico__
 
 - Toolchain support for the cortex-m0+ processors in the rp2040 (thumbv6m-none-eabi)
 
-- flip-link - this allows you to detect stack-overflows on the first core, which is the only supported target for now.
+- [flip-link](https://crates.io/crates/flip-link) - this allows you to detect stack-overflows on the first core, which is the only supported target for now.
 
-- probe-run - this provides an easy way to run our embedded application on the target device through
+- [probe-run](https://github.com/knurling-rs/probe-run) - this provides an easy way to run our embedded application on the target device through
 setting a Cargo target.
 
 ## Installation of development dependencies

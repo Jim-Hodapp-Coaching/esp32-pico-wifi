@@ -37,6 +37,7 @@ use rp2040_hal::{
     gpio::{bank0::Gpio10, bank0::Gpio11, bank0::Gpio2, bank0::Gpio7, Pin},
     pac,
 };
+use defmt::Format;
 
 use embedded_hal::delay::blocking::DelayUs;
 use embedded_hal::digital::blocking::InputPin;
@@ -48,7 +49,7 @@ use crate::hal::spi::Enabled;
 //use heapless::Vec;
 
 use no_std_net::{Ipv4Addr, SocketAddrV4};
-//use httparse::Response;
+use httparse::Error;
 
 use bme280::i2c::BME280;
 
@@ -190,6 +191,18 @@ impl From<u8> for WlStatus {
         else if state_u8 == 8 { return WlStatus::ApConnected; }
         else if state_u8 == 9 { return WlStatus::ApFailed; }
         else { return WlStatus::IdleStatus; }
+    }
+}
+
+struct HttpError { error: httparse::Error }
+
+impl defmt::Format for HttpError {
+    fn format(&self, f: defmt::Formatter) {
+        defmt::write!(
+           f,
+           "",
+           // get something from `error`
+        )
     }
 }
 
@@ -1879,32 +1892,34 @@ fn main() -> ! {
                             let result = response.parse(&response_buf);
                             match result {
                                 Ok(_) => {
-                                    write!(uart, "HTTP response version: {:?}\r\n", response.version.unwrap()).ok().unwrap();
-                                    write!(uart, "HTTP response code: {:?}\r\n", response.code.unwrap()).ok().unwrap();
-                                    write!(uart, "HTTP response reason: {:?}\r\n", response.reason.unwrap()).ok().unwrap();
+                                    defmt::info!("HTTP response version: {:?}", response.version.unwrap());
+                                    defmt::info!("HTTP response code: {:?}", response.code.unwrap());
+                                    defmt::info!("HTTP response reason: {:?}", response.reason.unwrap());
 
                                     if response.code.unwrap() == 200 {
-                                        uart.write_full_blocking(b"Got successful response from HTTP server.\r\n");
+                                        defmt::info!("Got successful response from HTTP server.");
                                     } else if response.code.unwrap() == 400 {
-                                        uart.write_full_blocking(b"** Got error response from HTTP server.\r\n");
+                                        defmt::warn!("** Got error response from HTTP server.");
                                     }
                                 }
                                 Err(e) => {
-                                    write!(uart, "Failed to parse HTTP server response: {:?}\r\n", e).ok().unwrap();
+                                    let he = HttpError { error: e };
+                                    defmt::warn!("Failed to parse HTTP server response: {:?}", he);
                                 }
                             }
 
                         }
                         Err(e) => {
-                            write!(uart, "Failed to get HTTP server response: {:?}\r\n", e).ok().unwrap();
+                            //defmt::warn!("Failed to get HTTP server response: {}", e);
+                            defmt::warn!("ailed to get HTTP server response");
                         }
                     }
 
                     // It's important to stop the existing client before trying to start the client again,
                     // otherwise expect Undefined behavior
-                    uart.write_full_blocking(b"\tstop_client()\r\n");
+                    defmt::trace!("\tstop_client()");
                     let stopped = stop_client(&mut spi_drv, &mut uart, socket).ok().unwrap();
-                    if !stopped { write!(uart, "** Failed to stop ESP32 TCP client.\r\n").ok().unwrap(); }
+                    if !stopped { defmt::warn!("** Failed to stop ESP32 TCP client."); }
 
                     // Sleep 10s in between sending sensor readings to Ambi backend
                     sleep = 10000;
@@ -1923,7 +1938,7 @@ fn main() -> ! {
             }
         }
 
-        write!(uart, "Loop ({:?}) ...\r\n\r\n", i).ok().unwrap();
+        defmt::trace!("Loop ({:?}) ...", i);
 
         delay.delay_ms(sleep).ok().unwrap();
         i += 1;
