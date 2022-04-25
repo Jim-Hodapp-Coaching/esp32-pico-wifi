@@ -59,9 +59,9 @@ const START_CMD: u8 = 0xE0u8;
 const END_CMD: u8 = 0xEEu8;
 const ERR_CMD: u8 = 0xEFu8;
 
-const CMD_FLAG: u8 = 0;
+const _CMD_FLAG: u8 = 0;
 const REPLY_FLAG: u8 = 1 << 7;
-const DATA_FLAG: u8 = 0x40u8;
+const _DATA_FLAG: u8 = 0x40u8;
 
 const PARAMS_ARRAY_LEN: usize = 8;
 const STR_LEN: usize = 512;
@@ -83,9 +83,6 @@ const STOP_CLIENT_TCP: u8 = 0x2e;
 
 const SET_ANALOG_WRITE: u8 = 0x52u8;
 const GET_CLIENT_STATE_TCP: u8 = 0x2fu8;
-
-const TCP_MODE: u8 = 0;
-const ESTABLISHED: u8 = 4;
 
 // TODO: this should be renamed or split up so SPI-level functionality and functional layers
 // above can use these errors without being confused by the naming (i.e. SpiDrv...)
@@ -368,7 +365,14 @@ impl SpiDrv {
     }
 
     fn check_start_cmd(&mut self, uart: &mut EnabledUart) -> SpiResult<bool> {
-        Ok(self.wait_for_byte(uart, START_CMD)?)
+        match self.wait_for_byte(uart, START_CMD) {
+            Ok(b) => {
+                return Ok(b);
+            }
+            Err(e) => {
+                return Err(e);
+            }
+        }
     }
 
     fn wait_response_cmd(
@@ -377,6 +381,7 @@ impl SpiDrv {
         cmd: u8,
         num_param: u8,
     ) -> SpiResult<[u8; PARAMS_ARRAY_LEN]> {
+        uart.write_full_blocking(b"wait_response_cmd()\r\n");
         // TODO: can we turn this into more of a functional syntax to clean
         // up the deep nesting? Investigate `map` for `Result` in Rust by Example, or use of Combinators
         self.check_start_cmd(uart)?;
@@ -583,6 +588,7 @@ impl SpiDrv {
         buffer: &mut [u8],
         last_param: bool,
     ) -> SpiResult<()> {
+        write!(uart, "\t\tbuffer.len(): {:?}\r\n", buffer.len()).ok().unwrap();
         self.send_param_len16(uart, buffer.len() as u16)?;
 
         match self.spi.transfer(buffer) {
@@ -666,12 +672,8 @@ impl SpiDrv {
                             .unwrap();
                         if last_param {
                             match self.send_end_cmd(uart) {
-                                Ok(byte) => {
-                                    return Ok(());
-                                }
-                                Err(e) => {
-                                    return Err(e);
-                                }
+                                Ok(byte) => { return Ok(()); }
+                                Err(e) => { return Err(e); }
                             }
                         } else {
                             return Ok(());
@@ -858,7 +860,7 @@ fn wifi_set_passphrase(
             writeln!(uart, "\r\n").ok().unwrap();
         }
         Err(e) => {
-            writeln!(uart, "\twifi_set_passphrase_response Err: {:?}\r", e)
+            write!(uart, "\twifi_set_passphrase_response Err: {:?}\r\n", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
@@ -889,7 +891,7 @@ fn get_connection_status(
             write!(
                 uart,
                 "\tget_connection_status_response: {:?}\r\n",
-                params[0]
+                status
             )
             .ok()
             .unwrap();
@@ -898,7 +900,7 @@ fn get_connection_status(
             return Ok(status);
         }
         Err(e) => {
-            writeln!(uart, "\tget_connection_status_response Err: {:?}\r", e)
+            write!(uart, "\tget_connection_status_response Err: {:?}\r\n", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
@@ -907,6 +909,7 @@ fn get_connection_status(
     }
 }
 
+#[allow(dead_code)]
 fn get_fw_version(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> bool {
     uart.write_full_blocking(b"wait_for_esp_select()\r\n");
     spi_drv.wait_for_esp_select();
@@ -971,12 +974,12 @@ fn send_data(
 ) -> Result<[u8; PARAMS_ARRAY_LEN], String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
-    spi_drv.send_cmd(uart, SEND_DATA_TCP, 2);
-    spi_drv.send_buffer(uart, &mut [socket], false);
+    spi_drv.send_cmd(uart, SEND_DATA_TCP, 2).ok().unwrap();
+    spi_drv.send_buffer(uart, &mut [socket], false).ok().unwrap();
 
     let data_bytes: &mut [u8] = unsafe { data.as_bytes_mut() };
-    write!(uart, "\tSending data: {:?}\r\n", data_bytes).unwrap();
-    spi_drv.send_buffer(uart, data_bytes, true);
+    write!(uart, "\tHTTP request bytes: {:?}\r\n", data_bytes).unwrap();
+    spi_drv.send_buffer(uart, data_bytes, true).ok().unwrap();
 
     // this could be a usize
     let command_size = (9 + data.len()) as u16;
@@ -988,14 +991,14 @@ fn send_data(
     match spi_drv.wait_response_cmd(uart, SEND_DATA_TCP, 1) {
         Ok(params) => {
             spi_drv.esp_deselect();
-            Ok(params)
+            return Ok(params);
         }
         Err(e) => {
             writeln!(uart, "\twait_response_cmd(SEND_DATA_TCP) Err: {:?}\r", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            Err(String::from("Error wait_response_cmd(SEND_DATA_TCP)"))
+            return Err(String::from("Error wait_response_cmd(SEND_DATA_TCP)"));
         }
     }
 }
@@ -1003,11 +1006,8 @@ fn send_data(
 fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.wait_for_esp_select();
 
-    let results = spi_drv.send_cmd(uart, GET_SOCKET, 0);
-    match results {
-        Ok(_) => {
-            uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n");
-        }
+    match spi_drv.send_cmd(uart, GET_SOCKET, 0) {
+        Ok(_) => { uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n"); }
         Err(e) => {
             writeln!(uart, "\t** Failed to send GET_SOCKET command: {:?}\r\n", e)
                 .ok()
@@ -1018,21 +1018,20 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
 
-    let wait_response = spi_drv.wait_response_cmd(uart, GET_SOCKET, 1);
-    match wait_response {
+    match spi_drv.wait_response_cmd(uart, GET_SOCKET, 1) {
         Ok(params) => {
             write!(uart, "\tget_socket: {:?}\r\n", params[0])
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            Ok(params[0])
+            return Ok(params[0]);
         }
         Err(e) => {
             writeln!(uart, "\twait_response_cmd(GET_SOCKET) Err: {:?}\r", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            Err(e)
+            return Err(e);
         }
     }
 }
@@ -1041,35 +1040,29 @@ fn start_client(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     host_address_port: SocketAddrV4,
-    // mut host: String<STR_LEN>,
     socket: u8,
-    transport_mode: u8,
-) -> Result<bool, String<STR_LEN>> {
+    transport_mode: SvProtocolMode
+) -> Result<bool, SpiDrvError> {
     spi_drv.wait_for_esp_select();
-    spi_drv.send_cmd(uart, START_CLIENT_TCP, 4).ok().unwrap();
+    spi_drv.send_cmd(uart, START_CLIENT_TCP, 4)?;
 
-    let host_ip_bytes: &mut [u8] = &mut host_address_port.ip().octets();
-    writeln!(uart, "\tsending host_ip: {:?}\r", host_ip_bytes)
+    write!(uart, "\tSending host IP: {:?}\r\n", &mut host_address_port.ip())
         .ok()
         .unwrap();
-    spi_drv.send_param(uart, host_ip_bytes, false).ok().unwrap();
+    spi_drv.send_param(uart, &mut host_address_port.ip().octets(), false).ok().unwrap();
 
-    let port: u16 = host_address_port.port();
-    writeln!(uart, "\tsending port: {:?}\r", port).ok().unwrap();
-    spi_drv.send_param_word(uart, port, false).ok().unwrap();
+    write!(uart, "\tSending host port: {:?}\r\n", host_address_port.port()).ok().unwrap();
+    spi_drv.send_param_word(uart, host_address_port.port(), false).ok().unwrap();
 
-    let socket_bytes: &mut [u8] = &mut [socket];
-    writeln!(uart, "\tsending socket: {:?}\r", socket_bytes)
+    write!(uart, "\tSending socket: {:?}\r\n", socket)
         .ok()
         .unwrap();
-    spi_drv.send_param(uart, socket_bytes, false).ok().unwrap();
+    spi_drv.send_param(uart, &mut [socket], false).ok().unwrap();
 
-    let transport_mode_bytes: &mut [u8] = &mut [transport_mode];
-    writeln!(uart, "\tsending transport_mode: {:?}\r", transport_mode)
+    write!(uart, "\tSending transport_mode: {:?}\r\n", transport_mode)
         .ok()
         .unwrap();
-    spi_drv
-        .send_param(uart, transport_mode_bytes, true)
+    spi_drv.send_param(uart, &mut [transport_mode as u8], true)
         .ok()
         .unwrap();
 
@@ -1077,10 +1070,9 @@ fn start_client(
     spi_drv.wait_for_esp_select();
 
     // Wait for reply
-    let wait_response = spi_drv.wait_response_cmd(uart, START_CLIENT_TCP, 1);
-    match wait_response {
+    match spi_drv.wait_response_cmd(uart, START_CLIENT_TCP, 1) {
         Ok(params) => {
-            write!(uart, "\twifi_start_client response param: {:?}", params[0])
+            write!(uart, "\tstart_client response param: {:?}\r\n", params[0])
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
@@ -1088,11 +1080,11 @@ fn start_client(
             return Ok(params[0] == 1);
         }
         Err(e) => {
-            writeln!(uart, "\twifi_start_client Err: {:?}\r", e)
+            write!(uart, "\twait_response_cmd(START_CLIENT_TCP) Err: {:?}\r\n", e)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Ok(false);
+            return Err(SpiDrvError::ServerCommTimeout);
         }
     }
 }
@@ -1101,11 +1093,10 @@ fn get_client_state(
     spi_drv: &mut SpiDrv,
     uart: &mut EnabledUart,
     socket: u8,
-) -> Result<u8, String<STR_LEN>> {
+) -> Result<WlTcpState, SpiDrvError> {
     spi_drv.wait_for_esp_select();
 
-    spi_drv
-        .send_cmd(uart, GET_CLIENT_STATE_TCP, 1)
+    spi_drv.send_cmd(uart, GET_CLIENT_STATE_TCP, 1)
         .ok()
         .unwrap();
     spi_drv.send_param(uart, &mut [socket], true).ok().unwrap();
@@ -1117,23 +1108,22 @@ fn get_client_state(
     spi_drv.wait_for_esp_select();
 
     // Wait for reply
-    let wait_response = spi_drv.wait_response_cmd(uart, GET_CLIENT_STATE_TCP, 1);
-    match wait_response {
+    match spi_drv.wait_response_cmd(uart, GET_CLIENT_STATE_TCP, 1) {
         Ok(params) => {
-            writeln!(uart, "\tget_client_state param {:?}\r", params)
+            let state: WlTcpState = params[0].into();
+            writeln!(uart, "\tGET_CLIENT_STATE state {:?}\r", state)
                 .ok()
                 .unwrap();
             spi_drv.esp_deselect();
-            return Ok(params[0]);
+            return Ok(state);
         }
         Err(e) => {
-            writeln!(uart, "\tget_client_state Err: {:?}\r", e)
+            writeln!(uart, "\tGET_CLIENT_STATE response Err: {:?}\r", e)
                 .ok()
                 .unwrap();
 
             spi_drv.esp_deselect();
-
-            return Err(String::from("Failed to get get client state response"));
+            return Err(SpiDrvError::ServerCommTimeout);
         }
     }
 }
@@ -1144,33 +1134,37 @@ fn connect<D: DelayMs<u16>>(
     delay: &mut D,
     host_address_port: SocketAddrV4,
     socket: u8,
-    transport_mode: u8,
-) -> Result<bool, String<STR_LEN>> {
-    let result = start_client(spi_drv, uart, host_address_port, socket, transport_mode);
-
-    match result {
-        Ok(started) => {
-            if started {
-                uart.write_full_blocking(b"\tstart client function succeeded\r\n");
-            } else {
-                return Ok(false);
+) -> Result<bool, SpiDrvError> {
+    let mut timeout: u16 = 10000;
+    while timeout > 0 {
+        match start_client(spi_drv, uart, host_address_port, socket, SvProtocolMode::TCP) {
+            Ok(started) => {
+                match started {
+                    true => break,
+                    false => return Ok(false)
+                }
             }
-        }
-        Err(e) => {
-            uart.write_full_blocking(b"\tstart client function failed with error\r\n");
-            return Err(String::from("start client function failed with error"));
+            Err(SpiDrvError::ServerCommTimeout) => {
+                write!(uart, "ServerCommTimeout for start_client(), retry #{:?}\r\n", timeout).ok().unwrap();
+                delay.delay_ms(1000);
+                timeout -= 1;
+            }
+            Err(e) => {
+                return Err(e);
+            }
         }
     }
 
-    let mut n = 0;
-    while n < 20 {
-        let state = get_client_state(spi_drv, uart, socket).ok().unwrap();
-
-        if state == ESTABLISHED {
-            return Ok(true);
+    timeout = 10000;
+    while timeout > 0 {
+        match get_client_state(spi_drv, uart, socket) {
+            Ok(state) => {
+                if state == WlTcpState::Established { return Ok(true); }
+            }
+            Err(e) => { return Err(e); }
         }
         delay.delay_ms(10);
-        n += 1
+        timeout -= 1;
     }
 
     return Ok(false);
@@ -1183,9 +1177,10 @@ fn stop_client(
 ) -> Result<bool, SpiDrvError> {
     spi_drv.wait_for_esp_select();
 
-    spi_drv.send_cmd(uart, STOP_CLIENT_TCP, 1);
-    spi_drv.send_param(uart, &mut [socket], true);
+    spi_drv.send_cmd(uart, STOP_CLIENT_TCP, 1).ok().unwrap();
+    spi_drv.send_param(uart, &mut [socket], true).ok().unwrap();
 
+    // Pad to a multiple of 4
     spi_drv.read_byte(uart).unwrap();
     spi_drv.read_byte(uart).unwrap();
 
@@ -1217,7 +1212,7 @@ fn avail_data(
 ) -> Result<usize, String<STR_LEN>> {
     spi_drv.wait_for_esp_select();
 
-    spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1);
+    spi_drv.send_cmd(uart, AVAIL_DATA_TCP, 1).ok().unwrap();
     let socket_bytes: &mut [u8] = &mut [socket];
     spi_drv.send_param(uart, socket_bytes, true).ok().unwrap();
 
@@ -1227,8 +1222,7 @@ fn avail_data(
     spi_drv.esp_deselect();
     spi_drv.wait_for_esp_select();
 
-    let wait_response = spi_drv.wait_response_cmd(uart, AVAIL_DATA_TCP, 1);
-    match wait_response {
+    match spi_drv.wait_response_cmd(uart, AVAIL_DATA_TCP, 1) {
         Ok(params) => {
             writeln!(uart, "\tavail_data() {:?}\r", params)
                 .ok()
@@ -1277,11 +1271,8 @@ fn get_data_buf(
 
     match spi_drv.wait_response_data16(uart, GET_DATABUF_TCP, 1) {
         Ok(buf) => {
-            write!(uart, "\t\tget_databuf_tcp buf.len(): {:?}\r\n", buf.len())
-                .ok()
-                .unwrap();
             spi_drv.esp_deselect();
-            Ok(buf)
+            return Ok(buf);
         }
         Err(e) => {
             writeln!(
@@ -1292,7 +1283,7 @@ fn get_data_buf(
             .ok()
             .unwrap();
             spi_drv.esp_deselect();
-            Err(String::from("Error wait_response_data16(GET_DATABUF_TCP)"))
+            return Err(String::from("Error wait_response_data16(GET_DATABUF_TCP)"));
         }
     }
 }
@@ -1326,11 +1317,11 @@ fn get_server_response<D: DelayMs<u16>>(
     )
     .ok()
     .unwrap();
-    let response_buf = get_data_buf(spi_drv, uart, socket, avail_length as u16)?;
 
+    let response_buf = get_data_buf(spi_drv, uart, socket, avail_length as u16)?;
     let response_str = core::str::from_utf8(&response_buf).unwrap();
 
-    writeln!(uart, "\tresponse string: {:?}\r\n", response_str)
+    writeln!(uart, "\tHTTP server response string: {:?}\r\n", response_str)
         .ok()
         .unwrap();
 
@@ -1388,7 +1379,7 @@ fn http_request<D: DelayMs<u16>>(
     humidity: f32,
     pressure: f32,
 ) -> Result<bool, String<STR_LEN>> {
-    match connect(spi_drv, uart, delay, host_address_port, socket, TCP_MODE) {
+    match connect(spi_drv, uart, delay, host_address_port, socket) {
         Ok(connected) => {
             if connected {
                 uart.write_full_blocking(b"Successfully connected to remote TCP server.\r\n");
@@ -1572,8 +1563,7 @@ fn main() -> ! {
     let mut did_once = false; // Only send HTTP POST one time
     loop {
         // Check for connection in loop and set led on if connected succesfully
-        let result = get_connection_status(&mut spi_drv, &mut uart);
-        match result {
+        match get_connection_status(&mut spi_drv, &mut uart) {
             Ok(status) => {
                 if status == WlStatus::Connected && !did_once {
                     uart.write_full_blocking(b"** Connected to WiFi\r\n");
@@ -1597,7 +1587,7 @@ fn main() -> ! {
 
                     writeln!(
                         uart,
-                        "Making HTTP request to: http://{:?}{:?}\r\n",
+                        "\r\nMaking HTTP request to: http://{:?}{:?}\r\n",
                         host_address_port, request_path
                     )
                     .ok()
