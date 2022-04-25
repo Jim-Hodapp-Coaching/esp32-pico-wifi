@@ -368,7 +368,7 @@ impl SpiDrv {
         uart.write_full_blocking(b"\tSuccess: read_and_check_byte(num_param)\r\n");
 
         let num_params_to_read = self.get_param(uart)? as usize;
-        write!(uart, "num_param_read: {:?}\r\n", num_params_to_read).ok().unwrap();
+        write!(uart, "\tnum_param_read: {:?}\r\n", num_params_to_read).ok().unwrap();
 
         if num_params_to_read > PARAMS_ARRAY_LEN {
             uart.write_full_blocking(
@@ -499,17 +499,17 @@ impl SpiDrv {
             self.read_byte(uart).ok().unwrap(),
             self.read_byte(uart).ok().unwrap()
         ];
-        uart.write_full_blocking(b" starting read_param_len16 \r\n");
+        uart.write_full_blocking(b"\tread_param_len16()\r\n");
 
         let param_length: u16 = self.combine_2_bytes(buf[1], buf[0]);
-        write!(uart, "read_param_len_16 length =  {:?}\r\n", param_length).unwrap();
+        write!(uart, "\t\tread_param_len_16 length =  {:?}\r\n", param_length).unwrap();
         Ok(param_length)
     }
 
     fn send_param_len8(&mut self, uart: &mut EnabledUart, param_len: u8) -> SpiResult<()> {
         match self.spi.transfer(&mut [param_len]) {
             Ok(byte) => {
-                write!(uart, "read byte: 0x{:X?}\r\n", byte).unwrap();
+                write!(uart, "\t\tread byte: 0x{:X?}\r\n", byte).unwrap();
                 return Ok(());
             }
             Err(e) => {
@@ -1245,12 +1245,12 @@ fn get_server_response<D: DelayMs<u16>>(
       timeout -= 1;
    }
   
-    writeln!(uart, "response_length: {:?} avail_length {:?}\r\n", response_length, avail_length).ok().unwrap();
+    write!(uart, "\tresponse_length: {:?} avail_length {:?}\r\n", response_length, avail_length).ok().unwrap();
     let response_buf = get_data_buf(spi_drv, uart, socket, avail_length as u16)?; 
 
     let response_str = core::str::from_utf8(&response_buf).unwrap();
                     
-    writeln!(uart, "response string: {:?}\r\n", response_str).ok().unwrap();
+    writeln!(uart, "\tresponse string: {:?}\r\n", response_str).ok().unwrap();
 
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut response = httparse::Response::new(&mut headers);
@@ -1258,18 +1258,18 @@ fn get_server_response<D: DelayMs<u16>>(
         Ok(parsed) => {
             write!(uart, "HTTP response version: {:?}\r\n", response.version.unwrap()).ok().unwrap();
             write!(uart, "HTTP response code: {:?}\r\n", response.code.unwrap()).ok().unwrap();
-            write!(uart, "HTTP response reason: {:?}\r\n", response.reason.unwrap()).ok().unwrap();
+            writeln!(uart, "HTTP response reason: {:?}\r\n", response.reason.unwrap()).ok().unwrap();
 
             if response.code.unwrap() == 200 {
-                writeln!(uart, "Got successful response from HTTP server.").ok().unwrap();
+                write!(uart, "Got successful response from HTTP server.\r\n").ok().unwrap();
             } else if response.code.unwrap() == 400 {
-                writeln!(uart, "** Got error response from HTTP server.").ok().unwrap();
+                write!(uart, "** Got error response from HTTP server.\r\n").ok().unwrap();
             }
             return Ok(parsed);
         }
 
         Err(e) => {
-            write!(uart, "Failed to parse HTTP server response: {:?}", e).ok().unwrap();
+            write!(uart, "Failed to parse HTTP server response: {:?}\r\n", e).ok().unwrap();
             return Err(String::from("Failed to parse HTTP server response"));
         }
     }
@@ -1488,10 +1488,10 @@ fn main() -> ! {
                     uart.write_full_blocking(b"Getting server response...\r\n---------------------------\r\n");
                     match get_server_response(&mut spi_drv, &mut uart, &mut delay, socket) {
                         Ok(status) => {
-                            writeln!(uart, "Successful HTTP response: {:?}", status).ok().unwrap();
+                            writeln!(uart, "Successful HTTP response: {:?}\r\n", status).ok().unwrap();
                         }
                         Err(e) => {
-                            writeln!(uart, "** HTTP response error: {:?}", e).ok().unwrap();
+                            writeln!(uart, "** HTTP response error: {:?}\r\n", e).ok().unwrap();
                         }
                     }
 
