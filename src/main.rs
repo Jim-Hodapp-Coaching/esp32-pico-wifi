@@ -588,7 +588,9 @@ impl SpiDrv {
         buffer: &mut [u8],
         last_param: bool,
     ) -> SpiResult<()> {
-        write!(uart, "\t\tbuffer.len(): {:?}\r\n", buffer.len()).ok().unwrap();
+        write!(uart, "\t\tbuffer.len(): {:?}\r\n", buffer.len())
+            .ok()
+            .unwrap();
         self.send_param_len16(uart, buffer.len() as u16)?;
 
         match self.spi.transfer(buffer) {
@@ -672,8 +674,12 @@ impl SpiDrv {
                             .unwrap();
                         if last_param {
                             match self.send_end_cmd(uart) {
-                                Ok(byte) => { return Ok(()); }
-                                Err(e) => { return Err(e); }
+                                Ok(byte) => {
+                                    return Ok(());
+                                }
+                                Err(e) => {
+                                    return Err(e);
+                                }
                             }
                         } else {
                             return Ok(());
@@ -888,13 +894,9 @@ fn get_connection_status(
     match spi_drv.wait_response_cmd(uart, GET_CONN_STATUS, 1) {
         Ok(params) => {
             let status: WlStatus = params[0].into();
-            write!(
-                uart,
-                "\tget_connection_status_response: {:?}\r\n",
-                status
-            )
-            .ok()
-            .unwrap();
+            write!(uart, "\tget_connection_status_response: {:?}\r\n", status)
+                .ok()
+                .unwrap();
             spi_drv.esp_deselect();
 
             return Ok(status);
@@ -975,7 +977,10 @@ fn send_data(
     spi_drv.wait_for_esp_select();
 
     spi_drv.send_cmd(uart, SEND_DATA_TCP, 2).ok().unwrap();
-    spi_drv.send_buffer(uart, &mut [socket], false).ok().unwrap();
+    spi_drv
+        .send_buffer(uart, &mut [socket], false)
+        .ok()
+        .unwrap();
 
     let data_bytes: &mut [u8] = unsafe { data.as_bytes_mut() };
     write!(uart, "\tHTTP request bytes: {:?}\r\n", data_bytes).unwrap();
@@ -1007,7 +1012,9 @@ fn get_socket(spi_drv: &mut SpiDrv, uart: &mut EnabledUart) -> SpiResult<u8> {
     spi_drv.wait_for_esp_select();
 
     match spi_drv.send_cmd(uart, GET_SOCKET, 0) {
-        Ok(_) => { uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n"); }
+        Ok(_) => {
+            uart.write_full_blocking(b"\tSent GET_SOCKET command\r\n");
+        }
         Err(e) => {
             writeln!(uart, "\t** Failed to send GET_SOCKET command: {:?}\r\n", e)
                 .ok()
@@ -1041,18 +1048,34 @@ fn start_client(
     uart: &mut EnabledUart,
     host_address_port: SocketAddrV4,
     socket: u8,
-    transport_mode: SvProtocolMode
+    transport_mode: SvProtocolMode,
 ) -> Result<bool, SpiDrvError> {
     spi_drv.wait_for_esp_select();
     spi_drv.send_cmd(uart, START_CLIENT_TCP, 4)?;
 
-    write!(uart, "\tSending host IP: {:?}\r\n", &mut host_address_port.ip())
+    write!(
+        uart,
+        "\tSending host IP: {:?}\r\n",
+        &mut host_address_port.ip()
+    )
+    .ok()
+    .unwrap();
+    spi_drv
+        .send_param(uart, &mut host_address_port.ip().octets(), false)
         .ok()
         .unwrap();
-    spi_drv.send_param(uart, &mut host_address_port.ip().octets(), false).ok().unwrap();
 
-    write!(uart, "\tSending host port: {:?}\r\n", host_address_port.port()).ok().unwrap();
-    spi_drv.send_param_word(uart, host_address_port.port(), false).ok().unwrap();
+    write!(
+        uart,
+        "\tSending host port: {:?}\r\n",
+        host_address_port.port()
+    )
+    .ok()
+    .unwrap();
+    spi_drv
+        .send_param_word(uart, host_address_port.port(), false)
+        .ok()
+        .unwrap();
 
     write!(uart, "\tSending socket: {:?}\r\n", socket)
         .ok()
@@ -1062,7 +1085,8 @@ fn start_client(
     write!(uart, "\tSending transport_mode: {:?}\r\n", transport_mode)
         .ok()
         .unwrap();
-    spi_drv.send_param(uart, &mut [transport_mode as u8], true)
+    spi_drv
+        .send_param(uart, &mut [transport_mode as u8], true)
         .ok()
         .unwrap();
 
@@ -1080,9 +1104,13 @@ fn start_client(
             return Ok(params[0] == 1);
         }
         Err(e) => {
-            write!(uart, "\twait_response_cmd(START_CLIENT_TCP) Err: {:?}\r\n", e)
-                .ok()
-                .unwrap();
+            write!(
+                uart,
+                "\twait_response_cmd(START_CLIENT_TCP) Err: {:?}\r\n",
+                e
+            )
+            .ok()
+            .unwrap();
             spi_drv.esp_deselect();
             return Err(SpiDrvError::ServerCommTimeout);
         }
@@ -1096,7 +1124,8 @@ fn get_client_state(
 ) -> Result<WlTcpState, SpiDrvError> {
     spi_drv.wait_for_esp_select();
 
-    spi_drv.send_cmd(uart, GET_CLIENT_STATE_TCP, 1)
+    spi_drv
+        .send_cmd(uart, GET_CLIENT_STATE_TCP, 1)
         .ok()
         .unwrap();
     spi_drv.send_param(uart, &mut [socket], true).ok().unwrap();
@@ -1137,15 +1166,25 @@ fn connect<D: DelayMs<u16>>(
 ) -> Result<bool, SpiDrvError> {
     let mut timeout: u16 = 10000;
     while timeout > 0 {
-        match start_client(spi_drv, uart, host_address_port, socket, SvProtocolMode::TCP) {
-            Ok(started) => {
-                match started {
-                    true => break,
-                    false => return Ok(false)
-                }
-            }
+        match start_client(
+            spi_drv,
+            uart,
+            host_address_port,
+            socket,
+            SvProtocolMode::TCP,
+        ) {
+            Ok(started) => match started {
+                true => break,
+                false => return Ok(false),
+            },
             Err(SpiDrvError::ServerCommTimeout) => {
-                write!(uart, "ServerCommTimeout for start_client(), retry #{:?}\r\n", timeout).ok().unwrap();
+                write!(
+                    uart,
+                    "ServerCommTimeout for start_client(), retry #{:?}\r\n",
+                    timeout
+                )
+                .ok()
+                .unwrap();
                 delay.delay_ms(1000);
                 timeout -= 1;
             }
@@ -1159,9 +1198,13 @@ fn connect<D: DelayMs<u16>>(
     while timeout > 0 {
         match get_client_state(spi_drv, uart, socket) {
             Ok(state) => {
-                if state == WlTcpState::Established { return Ok(true); }
+                if state == WlTcpState::Established {
+                    return Ok(true);
+                }
             }
-            Err(e) => { return Err(e); }
+            Err(e) => {
+                return Err(e);
+            }
         }
         delay.delay_ms(10);
         timeout -= 1;
@@ -1321,9 +1364,13 @@ fn get_server_response<D: DelayMs<u16>>(
     let response_buf = get_data_buf(spi_drv, uart, socket, avail_length as u16)?;
     let response_str = core::str::from_utf8(&response_buf).unwrap();
 
-    writeln!(uart, "\tHTTP server response string: {:?}\r\n", response_str)
-        .ok()
-        .unwrap();
+    writeln!(
+        uart,
+        "\tHTTP server response string: {:?}\r\n",
+        response_str
+    )
+    .ok()
+    .unwrap();
 
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut response = httparse::Response::new(&mut headers);
@@ -1406,29 +1453,31 @@ fn http_request<D: DelayMs<u16>>(
                     .push_str("User-Agent: edge/0.0.1\r\n")
                     .ok()
                     .unwrap();
-                http_post_request.push_str("Accept: */*\r\n").unwrap();
+                http_post_request.push_str("Accept: */*\r\n").ok().unwrap();
                 http_post_request
                     .push_str("Content-Type: application/json\r\n")
+                    .ok()
                     .unwrap();
                 let mut json_str: String<STR_LEN> = String::new();
                 write!(json_str,
-                r#"{{"temperature":"{:.1?}","humidity":"{:.1?}","pressure":"{:.0?}","dust_concentration":"200","air_purity":"Low Pollution"}}"#,
-                temperature, humidity, pressure / 100.0
-            ).ok().unwrap();
+                    "{{\"temperature\":\"{:.1?}\",\"humidity\":\"{:.1?}\",\"pressure\":\"{:.0?}\",\"dust_concentration\":\"200\",\"air_purity\":\"Low Pollution\"}}\r\n",
+                    temperature, humidity, pressure / 100.0
+                ).ok().unwrap();
                 let mut content_len_str: String<STR_LEN> = String::new();
                 write!(content_len_str, "{:?}\r\n", json_str.len())
                     .ok()
                     .unwrap();
-                http_post_request.push_str("Content-Length: ").unwrap();
-                http_post_request.push_str(&content_len_str).unwrap();
-                http_post_request.push_str("\r\n").unwrap();
-                http_post_request.push_str(&json_str).unwrap();
-                http_post_request.push_str("\r\n").unwrap();
+                http_post_request.push_str("Content-Length: ").ok().unwrap();
+                http_post_request.push_str(&content_len_str).ok().unwrap();
+                http_post_request.push_str("\r\n").ok().unwrap();
+                http_post_request.push_str(&json_str).ok().unwrap();
+                http_post_request.push_str("\r\n").ok().unwrap();
                 writeln!(uart, "\thttp_post_request: {:?}\r\n", http_post_request)
                     .ok()
                     .unwrap();
 
-                match send_data(spi_drv, uart, socket, http_post_request) {
+                let response = send_data(spi_drv, uart, socket, http_post_request);
+                match response {
                     Ok(data) => {
                         writeln!(
                             uart,
