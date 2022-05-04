@@ -18,3 +18,7 @@ rustflags = [
 
 [build]
 target = "thumbv6m-none-eabi"
+
+[env]
+# Set the level of debug output to display from the target application
+DEFMT_LOG = "debug"
