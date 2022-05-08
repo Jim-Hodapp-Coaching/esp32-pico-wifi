@@ -110,7 +110,7 @@ __BME280 to Pico__
 ```
 rustup target install thumbv6m-none-eabi
 cargo install flip-link
-cargo add panic_halt
+cargo install probe-run
 ```
 
 ## Set Up Git Hooks
