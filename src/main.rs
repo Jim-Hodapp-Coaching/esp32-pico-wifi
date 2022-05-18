@@ -1695,22 +1695,13 @@ fn main() -> ! {
                     .ok()
                     .unwrap();
 
-                    let t;
-                    let p;
-                    let h;
-                    match bme280_success {
-                        true => {
-                            // Reads live ambient values from the BME280 sensor
-                            let measurements = bme280.measure(&mut delay).unwrap();
-                            t = measurements.temperature;
-                            p = measurements.pressure;
-                            h = measurements.humidity;
-                        }
-                        false => {
-                            t = 23.0;
-                            p = 980.0;
-                            h = 32.0;
-                        }
+                    let measurements;
+                    if bme280_success {
+                        // Reads live ambient values from the BME280 sensor
+                        let m = bme280.measure(&mut delay).unwrap();
+                        measurements = (m.temperature, m.pressure, m.humidity);
+                    } else {
+                            measurements = (23.0, 980.0, 32.0);
                     }
 
                     http_request(
@@ -1720,9 +1711,9 @@ fn main() -> ! {
                         socket,
                         host_address_port,
                         request_path,
-                        t,
-                        h,
-                        p,
+                        measurements.0,
+                        measurements.2,
+                        measurements.1,
                     )
                     .ok()
                     .unwrap();
