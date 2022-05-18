@@ -369,11 +369,14 @@ impl SpiDrv {
             match self.read_byte(uart) {
                 Ok(byte_read) => {
                     if byte_read == ERR_CMD {
+                        write!(uart, "\t*** Received ERR_CMD back from ESP32 module\r\n")
+                            .ok()
+                            .unwrap();
                         return Err(SpiDrvError::CmdResponseError);
                     } else if byte_read == wait_byte {
                         return Ok(true);
                     } else if timeout == 0 {
-                        write!(uart, "*** wait_for_byte timed out\r\n")
+                        write!(uart, "\t*** wait_for_byte timed out\r\n")
                             .ok()
                             .unwrap();
                         return Err(SpiDrvError::CmdResponseTimeout);
