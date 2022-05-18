@@ -1215,10 +1215,19 @@ fn connect<D: DelayUs>(
                 timeout -= 1;
             }
             Err(e) => {
+                write!(uart, "Failed to start_client(): {:?}\r\n", e)
+                    .ok()
+                    .unwrap();
                 return Err(e);
             }
         }
     }
+
+    // FIXME: without this delay, we'll frequently see timing issues and receive
+    // a CmdResponseErr. We may not be handling busy/ack flag handling properly
+    // and needs further investigation. I suspect that the ESP32 isn't ready to
+    // receive another command yet.
+    delay.delay_ms(250).ok().unwrap();
 
     timeout = 10000;
     while timeout > 0 {
@@ -1232,7 +1241,7 @@ fn connect<D: DelayUs>(
                 return Err(e);
             }
         }
-        delay.delay_ms(10).ok().unwrap();
+        delay.delay_ms(100).ok().unwrap();
         timeout -= 1;
     }
 
