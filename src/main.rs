@@ -1602,10 +1602,14 @@ fn main() -> ! {
     // Initialise the BME280 using the secondary I2C address 0x77
     let mut bme280 = BME280::new_secondary(i2c);
 
+    let mut bme280_success = false;
     // Initialise the sensor
     let res = bme280.init(&mut delay);
     match res {
-        Ok(_) => defmt::debug!("Successfully initialized BME280 device"),
+        Ok(_) => {
+            defmt::debug!("Successfully initialized BME280 device");
+            bme280_success = true;
+        }
         Err(_) => defmt::error!("Failed to initialize BME280 device"),
     }
 
@@ -1691,8 +1695,23 @@ fn main() -> ! {
                     .ok()
                     .unwrap();
 
-                    // Reads live ambient values from the BME280 sensor
-                    let measurements = bme280.measure(&mut delay).unwrap();
+                    let t;
+                    let p;
+                    let h;
+                    match bme280_success {
+                        true => {
+                            // Reads live ambient values from the BME280 sensor
+                            let measurements = bme280.measure(&mut delay).unwrap();
+                            t = measurements.temperature;
+                            p = measurements.pressure;
+                            h = measurements.humidity;
+                        }
+                        false => {
+                            t = 23.0;
+                            p = 980.0;
+                            h = 32.0;
+                        }
+                    }
 
                     http_request(
                         &mut spi_drv,
@@ -1701,9 +1720,9 @@ fn main() -> ! {
                         socket,
                         host_address_port,
                         request_path,
-                        measurements.temperature,
-                        measurements.humidity,
-                        measurements.pressure,
+                        t,
+                        h,
+                        p,
                     )
                     .ok()
                     .unwrap();
