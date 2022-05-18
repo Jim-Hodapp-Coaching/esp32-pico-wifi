@@ -1704,7 +1704,7 @@ fn main() -> ! {
                             measurements = (23.0, 980.0, 32.0);
                     }
 
-                    http_request(
+                    match http_request(
                         &mut spi_drv,
                         &mut uart,
                         &mut delay,
@@ -1714,33 +1714,42 @@ fn main() -> ! {
                         measurements.0,
                         measurements.2,
                         measurements.1,
-                    )
-                    .ok()
-                    .unwrap();
-
-                    uart.write_full_blocking(
-                        b"Getting server response...\r\n---------------------------\r\n",
-                    );
-                    match get_server_response(&mut spi_drv, &mut uart, &mut delay, socket) {
-                        Ok(status) => {
-                            writeln!(uart, "Successful HTTP response: {:?}\r\n", status)
-                                .ok()
-                                .unwrap();
-                        }
-                        Err(e) => {
-                            writeln!(uart, "** HTTP response error: {:?}\r\n", e)
-                                .ok()
-                                .unwrap();
-                        }
+                    ) {
+                        Ok(_) => {
+                            uart.write_full_blocking(
+                                b"Getting server response...\r\n---------------------------\r\n",
+                            );
+                            match get_server_response(&mut spi_drv, &mut uart, &mut delay, socket) {
+                                Ok(status) => {
+                                    writeln!(uart, "Successful HTTP response: {:?}\r\n", status)
+                                        .ok()
+                                        .unwrap();
+                                }
+                                Err(e) => {
+                                    writeln!(uart, "** HTTP response error: {:?}\r\n", e)
+                                        .ok()
+                                        .unwrap();
+                                }
+                            }
+                        },
+                        Err(e) => defmt::error!("Failed to send HTTP request")
                     }
 
                     // It's important to stop the existing client before trying to start the client again,
                     // otherwise expect Undefined behavior
-                    let stopped = stop_client(&mut spi_drv, &mut uart, socket).ok().unwrap();
-                    if !stopped {
-                        writeln!(uart, "** Failed to stop ESP32 TCP client.")
-                            .ok()
-                            .unwrap();
+                    match stop_client(&mut spi_drv, &mut uart, socket) {
+                        Ok(stopped) => {
+                            if !stopped {
+                                writeln!(uart, "** Failed to stop ESP32 TCP client.")
+                                    .ok()
+                                    .unwrap();
+                            }
+                        }
+                        Err(e) => {
+                            writeln!(uart, "** Error encountered while trying to stop ESP32 TCP client.")
+                                .ok()
+                                .unwrap();
+                        }
                     }
 
                     // Sleep 10s in between sending sensor readings to Ambi backend
