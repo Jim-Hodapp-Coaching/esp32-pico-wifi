@@ -68,25 +68,25 @@ __Pico to ESP32 WiFi__
 
 The following table lists the pin name and pin number to properly wire between a Pico board and an ESP32 WiFi. This can be done on a breadboard such as the one listed above. Note that V+/- rail means the +/- columns on the breadboard for use as +5 VDC and GND respectively.
 
-| Pico              | ESP32 WiFi       | Adafuit Airlif | Breadboard |
-| ----------------- | ---------------- | ---------------| ---------- |
-|                   | GND (Pin 3)      | GND (Pin 3)    | V- rail    |
-| GP2 (Pin 4)       | GPIO0 (Pin 4)    | GP0 (Pin 10)   |            |
-| GP7 (Pin 10)      | ESP_CSn (Pin 10) | CS (Pin 7)     |            |
-| GP8 (Pin 11)      |                  |                |            |
-| GP9 (Pin 12)      |                  |                |            |
-| GP10 (Pin 14)     | ACK (Pin 14)     | Busy (Pin 8)   |            |
-| GP11 (Pin 15)     | RESETn (Pin 15)  | RSTn (Pin 9)   |            |
-| GP12 (Pin 16)     | SW_A (Pin 16)    | N/A            |            |
-|                   | GND (Pin 18)     |                | V- rail    |
-| VBUS (Pin 40)     | VBUS (Pin 40)    |                |            |
-| VSYS (Pin 39)     | VSYS (Pin 39)    | VIN (Pin 1)    | V+ rail    |
-| GND (Pin 38)      | GND (Pin 38)     |                | V- rail    |
-| 3V3(OUT) (Pin 36) | 3V3 (Pin 36)     | 3Vo (Pin 2)    |            |
-| GP19 (Pin 25)     | MOSI (Pin 25)    | MOSI (Pin 5)   |            |
-| GP18 (Pin 24)     | SCLK (Pin 24)    | SCK (Pin 4)    |            |
-|                   | GND (Pin 23)     |                | V- rail    |
-| GP16 (Pin 21)     | MISO (Pin 21)    | MISO (Pin 5)   |            |
+| Pico              | ESP32 WiFi       | Adafuit Airlift | Breadboard |
+| ----------------- | ---------------- | ----------------| ---------- |
+|                   | GND (Pin 3)      | GND (Pin 3)     | V- rail    |
+| GP2 (Pin 4)       | GPIO0 (Pin 4)    | GP0 (Pin 10)    |            |
+| GP7 (Pin 10)      | ESP_CSn (Pin 10) | CS (Pin 7)      |            |
+| GP8 (Pin 11)      |                  |                 |            |
+| GP9 (Pin 12)      |                  |                 |            |
+| GP10 (Pin 14)     | ACK (Pin 14)     | Busy (Pin 8)    |            |
+| GP11 (Pin 15)     | RESETn (Pin 15)  | RSTn (Pin 9)    |            |
+| GP12 (Pin 16)     | SW_A (Pin 16)    | N/A             |            |
+|                   | GND (Pin 18)     |                 | V- rail    |
+| VBUS (Pin 40)     | VBUS (Pin 40)    |                 |            |
+| VSYS (Pin 39)     | VSYS (Pin 39)    | VIN (Pin 1)     | V+ rail    |
+| GND (Pin 38)      | GND (Pin 38)     |                 | V- rail    |
+| 3V3(OUT) (Pin 36) | 3V3 (Pin 36)     | 3Vo (Pin 2)     |            |
+| GP19 (Pin 25)     | MOSI (Pin 25)    | MOSI (Pin 5)    |            |
+| GP18 (Pin 24)     | SCLK (Pin 24)    | SCK (Pin 4)     |            |
+|                   | GND (Pin 23)     |                 | V- rail    |
+| GP16 (Pin 21)     | MISO (Pin 21)    | MISO (Pin 5)    |            |
 
 __BME280 to Pico__
 
