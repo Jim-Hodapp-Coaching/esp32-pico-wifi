@@ -369,11 +369,14 @@ impl SpiDrv {
             match self.read_byte(uart) {
                 Ok(byte_read) => {
                     if byte_read == ERR_CMD {
+                        write!(uart, "\t*** Received ERR_CMD back from ESP32 module\r\n")
+                            .ok()
+                            .unwrap();
                         return Err(SpiDrvError::CmdResponseError);
                     } else if byte_read == wait_byte {
                         return Ok(true);
                     } else if timeout == 0 {
-                        write!(uart, "*** wait_for_byte timed out\r\n")
+                        write!(uart, "\t*** wait_for_byte timed out\r\n")
                             .ok()
                             .unwrap();
                         return Err(SpiDrvError::CmdResponseTimeout);
@@ -1212,10 +1215,19 @@ fn connect<D: DelayUs>(
                 timeout -= 1;
             }
             Err(e) => {
+                write!(uart, "Failed to start_client(): {:?}\r\n", e)
+                    .ok()
+                    .unwrap();
                 return Err(e);
             }
         }
     }
+
+    // FIXME: without this delay, we'll frequently see timing issues and receive
+    // a CmdResponseErr. We may not be handling busy/ack flag handling properly
+    // and needs further investigation. I suspect that the ESP32 isn't ready to
+    // receive another command yet.
+    delay.delay_ms(250).ok().unwrap();
 
     timeout = 10000;
     while timeout > 0 {
@@ -1229,7 +1241,7 @@ fn connect<D: DelayUs>(
                 return Err(e);
             }
         }
-        delay.delay_ms(10).ok().unwrap();
+        delay.delay_ms(100).ok().unwrap();
         timeout -= 1;
     }
 
@@ -1602,10 +1614,14 @@ fn main() -> ! {
     // Initialise the BME280 using the secondary I2C address 0x77
     let mut bme280 = BME280::new_secondary(i2c);
 
+    let mut bme280_success = false;
     // Initialise the sensor
     let res = bme280.init(&mut delay);
     match res {
-        Ok(_) => defmt::debug!("Successfully initialized BME280 device"),
+        Ok(_) => {
+            defmt::debug!("Successfully initialized BME280 device");
+            bme280_success = true;
+        }
         Err(_) => defmt::error!("Failed to initialize BME280 device"),
     }
 
@@ -1691,46 +1707,61 @@ fn main() -> ! {
                     .ok()
                     .unwrap();
 
-                    // Reads live ambient values from the BME280 sensor
-                    let measurements = bme280.measure(&mut delay).unwrap();
+                    let measurements;
+                    if bme280_success {
+                        // Reads live ambient values from the BME280 sensor
+                        let m = bme280.measure(&mut delay).unwrap();
+                        measurements = (m.temperature, m.pressure, m.humidity);
+                    } else {
+                            measurements = (23.0, 980.0, 32.0);
+                    }
 
-                    http_request(
+                    match http_request(
                         &mut spi_drv,
                         &mut uart,
                         &mut delay,
                         socket,
                         host_address_port,
                         request_path,
-                        measurements.temperature,
-                        measurements.humidity,
-                        measurements.pressure,
-                    )
-                    .ok()
-                    .unwrap();
-
-                    uart.write_full_blocking(
-                        b"Getting server response...\r\n---------------------------\r\n",
-                    );
-                    match get_server_response(&mut spi_drv, &mut uart, &mut delay, socket) {
-                        Ok(status) => {
-                            writeln!(uart, "Successful HTTP response: {:?}\r\n", status)
-                                .ok()
-                                .unwrap();
-                        }
-                        Err(e) => {
-                            writeln!(uart, "** HTTP response error: {:?}\r\n", e)
-                                .ok()
-                                .unwrap();
-                        }
+                        measurements.0,
+                        measurements.2,
+                        measurements.1,
+                    ) {
+                        Ok(_) => {
+                            uart.write_full_blocking(
+                                b"Getting server response...\r\n---------------------------\r\n",
+                            );
+                            match get_server_response(&mut spi_drv, &mut uart, &mut delay, socket) {
+                                Ok(status) => {
+                                    writeln!(uart, "Successful HTTP response: {:?}\r\n", status)
+                                        .ok()
+                                        .unwrap();
+                                }
+                                Err(e) => {
+                                    writeln!(uart, "** HTTP response error: {:?}\r\n", e)
+                                        .ok()
+                                        .unwrap();
+                                }
+                            }
+                        },
+                        Err(e) => defmt::error!("Failed to send HTTP request")
                     }
 
                     // It's important to stop the existing client before trying to start the client again,
                     // otherwise expect Undefined behavior
-                    let stopped = stop_client(&mut spi_drv, &mut uart, socket).ok().unwrap();
-                    if !stopped {
-                        writeln!(uart, "** Failed to stop ESP32 TCP client.")
-                            .ok()
-                            .unwrap();
+                    match stop_client(&mut spi_drv, &mut uart, socket) {
+                        Ok(stopped) => {
+                            if !stopped {
+                                writeln!(uart, "** Failed to stop ESP32 TCP client.")
+                                    .ok()
+                                    .unwrap();
+                            }
+                        }
+                        Err(e) => {
+                            writeln!(uart, "** Error encountered while trying to stop ESP32 TCP client.")
+                                .ok()
+                                .unwrap();
+                        }
                     }
 
                     // Sleep 10s in between sending sensor readings to Ambi backend
