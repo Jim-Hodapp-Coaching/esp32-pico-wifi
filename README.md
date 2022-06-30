@@ -145,6 +145,29 @@ minicom -D /dev/ttyUSB0 -b 115200
 Note that you'll most likely
 need to find the current /dev link assigned to the Pico UART for your particular machine.
 
+## Debugging with VSCode
+
+_Note: these instructions originate from the rp-hal project's [rp2040_project_template README](https://github.com/rp-rs/rp2040-project-template/blob/main/README.md)_
+
+To start a probe-rs debug session:
+
+  *Step 1* - Download [`probe-rs-debugger VSCode plugin 0.4.0`](https://github.com/probe-rs/vscode/releases/download/v0.4.0/probe-rs-debugger-0.4.0.vsix)
+
+  *Step 2* - Install `probe-rs-debugger VSCode plugin`
+  ```console
+  $ code --install-extension probe-rs-debugger-0.4.0.vsix
+  ```
+
+  *Step 3* - Install `probe-rs-debugger`
+  ```console
+  $ cargo install --git https://github.com/probe-rs/probe-rs probe-rs-debugger
+  ```
+
+  *Step 4* - Open this project in VSCode
+
+  *Step 5* - Launch a debug session by choosing `Run`>`Start Debugging` (or press F5)
+
+
 ## License
 
 This project is licensed under the [BSD + Patent license](https://opensource.org/licenses/BSDplusPatent).
